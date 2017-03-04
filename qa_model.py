@@ -99,7 +99,7 @@ class QASystem(object):
         self.question_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.context_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
-        self.answers_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.answers_placeholder = tf.placeholder(tf.int32, shape=(None, 2))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
