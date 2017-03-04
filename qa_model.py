@@ -45,6 +45,19 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
+        # lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(dims, forget_bias=1.0)
+        # lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(dims, forget_bias=1.0)
+        # # Pass lstm_fw_cell / lstm_bw_cell directly to tf.nn.bidrectional_rnn
+        # # if only a single layer is needed
+        # lstm_fw_multicell = tf.nn.rnn_cell.MultiRNNCell([lstm_fw_cell]*layers)
+        # lstm_bw_multicell = tf.nn.rnn_cell.MultiRNNCell([lstm_bw_cell]*layers)
+
+        # # tf.nn.bidirectional_rnn takes a list of tensors with shape 
+        # # [batch_size x cell_fw.state_size], so separate the input into discrete
+        # # timesteps.
+        # _X = tf.unpack(state_below, axis=1)
+        # # state_fw and state_bw are the final states of the forwards/backwards LSTM, respectively
+        # outputs, state_fw, state_bw = tf.nn.bidirectional_rnn(lstm_fw_multicell, lstm_bw_multicell, _X, dtype='float32')
 
         return
 
@@ -69,7 +82,7 @@ class Decoder(object):
         return
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, *args):
+    def __init__(self, encoder, decoder, embed_path):
         """
         Initializes your System
 
@@ -77,9 +90,16 @@ class QASystem(object):
         :param decoder: a decoder that you constructed in train.py
         :param args: pass in more arguments as needed
         """
+        self.encoder = encoder
+        self.pretrained_embeddings = np.load(embed_path)["glove"]
 
         # ==== set up placeholder tokens ========
 
+        self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.question_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.context_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
+        self.answers_placeholder = tf.placeholder(tf.int32, shape=(None, None))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -98,6 +118,7 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
+        self.encoder.encode()
         raise NotImplementedError("Connect all parts of your system here!")
 
 
@@ -115,7 +136,9 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("embeddings"):
-            pass
+            embeddings = tf.Variable(self.pretrained_embeddings)
+            # TODO: encode placeholders
+            return embeddings
 
     def optimize(self, session, train_x, train_y):
         """
@@ -244,7 +267,6 @@ class QASystem(object):
         :param train_dir: path to the directory where you should save the model checkpoint
         :return:
         """
-
         # some free code to print out number of parameters in your model
         # it's always good to check!
         # you will also want to save your model parameters in train_dir
