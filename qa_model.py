@@ -46,19 +46,19 @@ class Encoder(object):
                  or both.
         """
         # Forward direction cell
-        question_lstm_fw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        question_lstm_fw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
         # Backward direction cell
-        question_lstm_bw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        question_lstm_bw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
 
-        question_outputs, _, = rnn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings_lookup,
+        question_outputs, _, = tf.rnn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings_lookup,
                                               dtype=tf.float32)
 
         # Forward direction cell
-        context_lstm_fw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        context_lstm_fw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
         # Backward direction cell
-        context_lstm_bw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        context_lstm_bw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
 
-        context_outputs, _, = rnn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings_lookup,
+        context_outputs, _, = tf.rnn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings_lookup,
                                               dtype=tf.float32)
         return tf.concat(question_outputs, 2), tf.concat(context_outputs, 2)
 
