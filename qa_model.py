@@ -30,7 +30,7 @@ class Encoder(object):
         self.size = size
         self.vocab_dim = vocab_dim
 
-    def encode(self, inputs, masks, encoder_state_input):
+    def encode(self, question_embeddings_lookup, question_mask_placeholder, context_embeddings_lookup, context_mask_placeholder, encoder_state_input):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -45,21 +45,22 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
-        # lstm_fw_cell = tf.nn.rnn_cell.BasicLSTMCell(dims, forget_bias=1.0)
-        # lstm_bw_cell = tf.nn.rnn_cell.BasicLSTMCell(dims, forget_bias=1.0)
-        # # Pass lstm_fw_cell / lstm_bw_cell directly to tf.nn.bidrectional_rnn
-        # # if only a single layer is needed
-        # lstm_fw_multicell = tf.nn.rnn_cell.MultiRNNCell([lstm_fw_cell]*layers)
-        # lstm_bw_multicell = tf.nn.rnn_cell.MultiRNNCell([lstm_bw_cell]*layers)
+        # Forward direction cell
+        question_lstm_fw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        # Backward direction cell
+        question_lstm_bw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
 
-        # # tf.nn.bidirectional_rnn takes a list of tensors with shape 
-        # # [batch_size x cell_fw.state_size], so separate the input into discrete
-        # # timesteps.
-        # _X = tf.unpack(state_below, axis=1)
-        # # state_fw and state_bw are the final states of the forwards/backwards LSTM, respectively
-        # outputs, state_fw, state_bw = tf.nn.bidirectional_rnn(lstm_fw_multicell, lstm_bw_multicell, _X, dtype='float32')
+        question_outputs, _, = rnn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings_lookup,
+                                              dtype=tf.float32)
 
-        return
+        # Forward direction cell
+        context_lstm_fw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        # Backward direction cell
+        context_lstm_bw_cell = rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+
+        context_outputs, _, = rnn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings_lookup,
+                                              dtype=tf.float32)
+        return tf.concat(question_outputs, 2), tf.concat(context_outputs, 2)
 
 
 class Decoder(object):
@@ -103,22 +104,22 @@ class QASystem(object):
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
-            self.setup_embeddings()
-            self.setup_system()
+            question_embeddings_lookup, context_embeddings_lookup = self.setup_embeddings()
+            self.setup_system(question_embeddings_lookup, context_embeddings_lookup)
             self.setup_loss()
 
         # ==== set up training/updating procedure ====
         pass
 
 
-    def setup_system(self):
+    def setup_system(self, question_embeddings_lookup, context_embeddings_lookup):
         """
         After your modularized implementation of encoder and decoder
         you should call various functions inside encoder, decoder here
         to assemble your reading comprehension system!
         :return:
         """
-        self.encoder.encode()
+        self.encoder.encode(question_embeddings_lookup, context_embeddings_lookup)
         raise NotImplementedError("Connect all parts of your system here!")
 
 
@@ -137,8 +138,9 @@ class QASystem(object):
         """
         with vs.variable_scope("embeddings"):
             embeddings = tf.Variable(self.pretrained_embeddings)
-            # TODO: encode placeholders
-            return embeddings
+            question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
+            context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
+            return question_embeddings_lookup, context_embeddings_lookup
 
     def optimize(self, session, train_x, train_y):
         """
