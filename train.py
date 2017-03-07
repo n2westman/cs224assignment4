@@ -89,25 +89,35 @@ def main(_):
     # Creates a dataset. One datum looks as follows: datum1 = [context_word_ids, question_word_ids, answer_span]
     # Then the whole dataset is a NumPy array of this structure: [(datum1), (datum2), ..]
 
-    train_or_val = "train" # takes either 'train' or 'val'
+    train_or_val = "train" # Takes either 'train' or 'val'
     print("Loading dataset: " + train_or_val)
-
     context_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.context"
     question_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.question"
     answer_span_file = FLAGS.data_dir + "/" + train_or_val + ".span"
 
-    #dataset = np.empty([0,3])
     dataset = []
+    max_context_length = 0
+    max_question_length = 0
 
+    # Create basic dataset
     with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
-            context = context.strip()
-            question = question.strip()
-            answer = answer.strip()
-            #print("{0}\t{1}\t{2}".format(context, question, answer))
-            datum = (context.split(), question.split(), answer.split())
+            context = context.split()
+            question = question.split()
+            answer = answer.split()
+            datum = [context, question, answer]
             dataset.append(datum)
-            #dataset = np.vstack((dataset, datum))
+            # Track max length for context and question (for padding)
+            if len(context) > max_context_length:
+                max_context_length = len(context)
+            if len(question) > max_question_length:
+                max_question_length = len(question)
+    
+    # Add padding
+    for datum in dataset:
+        datum[0] = datum[0] + ['1'] * (max_context_length - len(datum[0]))
+        datum[1] = datum[1] + ['1'] * (max_question_length - len(datum[1]))
+
     dataset = np.array(dataset)
     print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
@@ -119,7 +129,8 @@ def main(_):
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)
 
-    qa = QASystem(encoder, decoder, embed_path)
+    qa = QASystem(encoder, decoder)
+
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
