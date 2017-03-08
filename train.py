@@ -10,7 +10,7 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
-from qa_model import Encoder, QASystem, Decoder
+from qa_model import Encoder, QASystem, Decoder, Mixer
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -118,8 +118,9 @@ def main(_):
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)
+    mixer = Mixer()
 
-    qa = QASystem(encoder, decoder, embed_path)
+    qa = QASystem(encoder, decoder, mixer, embed_path)
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
