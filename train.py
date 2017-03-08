@@ -10,10 +10,11 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
-from qa_model import Encoder, QASystem, Decoder
+from qa_model import Encoder, QASystem, Decoder, Mixer
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
+from qa_data import PAD_ID
 
 import logging
 
@@ -115,8 +116,8 @@ def main(_):
     
     # Add padding
     for datum in dataset:
-        datum[0] = datum[0] + ['1'] * (max_context_length - len(datum[0]))
-        datum[1] = datum[1] + ['1'] * (max_question_length - len(datum[1]))
+        datum[0] = datum[0] + [str(PAD_ID)] * (max_context_length - len(datum[0]))
+        datum[1] = datum[1] + [str(PAD_ID)] * (max_question_length - len(datum[1]))
 
     dataset = np.array(dataset)
     print("Dataset loaded, size: " + str(dataset.shape))
@@ -128,8 +129,9 @@ def main(_):
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     decoder = Decoder(output_size=FLAGS.output_size)
+    mixer = Mixer()
 
-    qa = QASystem(encoder, decoder)
+    qa = QASystem(encoder, decoder, mixer, embed_path)
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
