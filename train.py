@@ -112,9 +112,10 @@ def main(_):
     # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
 
     LIMIT_SAMPLES = True
-    ADD_PADDING = False
+    ADD_PADDING = True
 
-    num_samples = 2
+    num_samples = 3
+
     max_context_length = 0
     max_question_length = 0
 
@@ -147,7 +148,6 @@ def main(_):
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
-
     # dataset = np.array(dataset)
     # print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
