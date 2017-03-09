@@ -110,6 +110,14 @@ def main(_):
     # Create basic dataset
     # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
     # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
+
+    LIMIT_SAMPLES = True
+    ADD_PADDING = False
+
+    num_samples = 2
+    max_context_length = 0
+    max_question_length = 0
+
     with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
             context = context.split()
@@ -119,12 +127,29 @@ def main(_):
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
+
+            # Padding length tracker
+            if ADD_PADDING:
+                if len(context) > max_context_length:
+                    max_context_length = len(context)
+                if len(question) > max_question_length:
+                    max_question_length = len(question)
     
-            # REMOVE. This is a test using a single-item batch:
-            break
-    
-#    dataset = np.array(dataset)
-#    print("Dataset loaded, size: " + str(dataset.shape))
+            # Limit samples
+            if LIMIT_SAMPLES:
+                num_samples = num_samples - 1
+                if num_samples == 0:
+                    break
+
+    # Add padding
+    if ADD_PADDING:
+        for question in dataset['questions']:
+            question.extend([str(PAD_ID)] * (max_question_length - len(question)))
+        for context in dataset['contexts']:
+            context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+
+    # dataset = np.array(dataset)
+    # print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
