@@ -14,6 +14,7 @@ from qa_model import Encoder, QASystem, Decoder, Mixer
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
+from qa_data import PAD_ID
 
 import logging
 
@@ -118,7 +119,7 @@ def main(_):
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
-
+    
             # REMOVE. This is a test using a single-item batch:
             break
     
@@ -135,6 +136,7 @@ def main(_):
     mixer = Mixer()
 
     qa = QASystem(encoder, decoder, mixer, embed_path)
+
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
