@@ -9,6 +9,7 @@ import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
 from tensorflow.python.ops import variable_scope as vs
+from pdb import set_trace as t
 
 from evaluate import exact_match_score, f1_score
 
@@ -29,7 +30,7 @@ class Encoder(object):
     def __init__(self, size, vocab_dim):
         self.size = size
         self.vocab_dim = vocab_dim
-        self.n_hidden = 5
+        self.n_hidden_enc = 5
 
     def encode(self, question_embeddings, question_lengths, context_embeddings, context_lengths):
         """
@@ -67,28 +68,46 @@ class Encoder(object):
 
 class Mixer(object):
     def __init__(self):
-            self.n_hidden = 200
+            self.n_hidden_mix = 200
 
-    def mix(self, questions, contexts):
+    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
-        questions = tf.Print( questions, [tf.shape(questions)])
+        #questions = tf.Print( questions, [tf.shape(questions)])
 
-        affinity_matrix_L = tf.matmul(tf.transpose(questions), contexts)
+        # Dimensionalities:
+        # bilstm_encoded_questions: samples x question_words x 2*n_hidden_enc
+        # bilstm_encoded_contexts: samples x context_words x 2*n_hidden_enc
 
+        # Dimensionalities: 
+        # affinity_matrix_L: samples x question_words x context_words
+        # normalized_attention_weights_A_q: samples x question_words x context_words
+        # normalized_attention_weights_A_d: samples x context_words x question_words
+        # attention_contexts_C_q = samples x 2*n_hidden_enc x question_words
+        affinity_matrix_L = tf.matmul(bilstm_encoded_questions, tf.transpose(bilstm_encoded_contexts, perm = [0, 2, 1]))
         normalized_attention_weights_A_q = tf.nn.softmax(affinity_matrix_L)
-        normalized_attention_weights_A_d = tf.nn.softmax(tf.transpose(affinity_matrix_L))
-        attention_contexts_C_q = tf.matmul( contexts, normalized_attention_weights_A_q)
+        normalized_attention_weights_A_d = tf.nn.softmax(tf.transpose(affinity_matrix_L, perm = [0, 2, 1]))
+        attention_contexts_C_q = tf.transpose(tf.matmul(normalized_attention_weights_A_q, bilstm_encoded_contexts), perm = [0, 2, 1])
 
-        # 2l x (n+1) dot (n + 1)(m + 1) -> (2l x (m + 1) )
-        coattention_context_C_d = tf.matmul( tf.concat( [questions, attention_contexts_C_q], 1 ), normalized_attention_weights_A_d)
+        # Dimensionalities:
+        # Q_C_q_concat: samples x 2*2*n_hidden_enc * question_words
+        # coattention_context_C_d: samples x 2*2*n_hidden_enc * context_words
+        bilstm_encoded_questions_transpose = tf.transpose(bilstm_encoded_questions, perm = [0, 2, 1])
+        Q_C_q_concat = tf.concat([bilstm_encoded_questions_transpose, attention_contexts_C_q], 1)
+        A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
+        coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
         # Forward direction cell
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
         # Backward direction cell
         lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
-        D_C_d = tf.concat( [questions, coattention_context_C_d], 1 )
-        #U, _, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, dtype=tf.float64)
-        return D_C_d #U 
+        
+        # Dimensionalities:
+        # D_C_d: samples x context_words x 3*2*n_hidden_enc
+        # U: samples x context_words x 2*n_hidden_mix (packed in like this: ((data)), for some reason)
+        C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
+        D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
+        U, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float64)
+        return U #U 
 
 class Decoder(object):
     def __init__(self, output_size):
@@ -135,7 +154,7 @@ class QASystem(object):
             question_embeddings_lookup, context_embeddings_lookup = self.setup_embeddings()
             self.setup_system(
                 question_embeddings_lookup,
-                context_embeddings_lookup,
+                context_embeddings_lookup
             )
             #self.setup_loss()
 
@@ -150,6 +169,9 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
+        self.question_embeddings_lookup = question_embeddings_lookup
+        self.context_embeddings_lookup = context_embeddings_lookup
+
         bilstm_encoded_questions, bilstm_encoded_contexts = self.encoder.encode(
             question_embeddings_lookup,
             self.questions_lengths_placeholder,
@@ -160,7 +182,7 @@ class QASystem(object):
         self.bilstm_encoded_questions = bilstm_encoded_questions
         self.bilstm_encoded_contexts = bilstm_encoded_contexts
 
-        self.network = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts) 
+        self.network = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
 #
 #        raise NotImplementedError("Connect all parts of your system here!")
 
@@ -296,14 +318,27 @@ class QASystem(object):
             self.context_placeholder: dataset['contexts'],
             self.context_lengths_placeholder: dataset['context_lengths'],
         }
-        
-        print("dataset['questions']:", dataset['questions'])
-        print(self.bilstm_encoded_questions.get_shape())
 
-#        print_questions_shape = tf.Print(self.bilstm_encoded_questions, [ tf.shape(self.bilstm_encoded_questions) ], message="shape", summarize=500)
-#        output = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts, print_questions], feed_dict)
-        print_debug_output = tf.Print(self.network, [self.network], summarize=500)
-        output = session.run([self.network, print_debug_output ], feed_dict)
+        # Dimensionalities:
+        # question_placeholder: samples x words
+        # context_placeholder: samples x words
+        # question_embeddings_lookup: samples x words x embed_size
+        # context_embeddings_lookup: samples x words x embed_size
+        # bilstm_encoded_questions: samples x words x 2*n_hidden_enc
+        # bilstm_encoded_contexts: samples x words x 2*n_hidden_enc
+
+        # print_debug_output = tf.Print(self.network, [self.network], summarize=500)
+        
+        out1 = session.run([self.network], feed_dict)
+        #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)        
+        #t()
+        print(out1.shape)
+        #print(out2.shape)
+
+        #t()
+        #print("dataset['questions']:", dataset['questions'])
+        #print("question_placeholder", self.question_placeholder.get_shape())
+        #print("bilmst_enc_qs", self.bilstm_encoded_questions.get_shape())
 
     def train(self, session, dataset, train_dir):
         """
