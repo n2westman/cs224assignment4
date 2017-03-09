@@ -29,8 +29,9 @@ class Encoder(object):
     def __init__(self, size, vocab_dim):
         self.size = size
         self.vocab_dim = vocab_dim
+        self.n_hidden = 5
 
-    def encode(self, question_embeddings_lookup, question_mask_placeholder, context_embeddings_lookup, context_mask_placeholder, encoder_state_input):
+    def encode(self, question_embeddings, question_lengths, context_embeddings, context_lengths):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -45,23 +46,49 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
-        # Forward direction cell
-        question_lstm_fw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
-        # Backward direction cell
-        question_lstm_bw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        with tf.variable_scope("QuestionEncoderBiLSTM"):
+            # Forward direction cell
+            question_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            # Backward direction cell
+            question_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
 
-        question_outputs, _, = tf.rnn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings_lookup,
-                                              dtype=tf.float32)
+            question_outputs, _, = tf.nn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings,
+                                                  sequence_length=question_lengths, dtype=tf.float64)
 
-        # Forward direction cell
-        context_lstm_fw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
-        # Backward direction cell
-        context_lstm_bw_cell = tf.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+        with tf.variable_scope("AnswerEncoderBiLSTM"):
+            # Forward direction cell
+            context_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            # Backward direction cell
+            context_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
 
-        context_outputs, _, = tf.rnn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings_lookup,
-                                              dtype=tf.float32)
+            context_outputs, _, = tf.nn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings,
+                                                  sequence_length=context_lengths, dtype=tf.float64)
         return tf.concat(question_outputs, 2), tf.concat(context_outputs, 2)
 
+class Mixer(object):
+    def __init__(self):
+            self.n_hidden = 200
+
+    def mix(self, questions, contexts):
+        # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
+        questions = tf.Print( questions, [tf.shape(questions)])
+
+        affinity_matrix_L = tf.matmul(tf.transpose(questions), contexts)
+
+        normalized_attention_weights_A_q = tf.nn.softmax(affinity_matrix_L)
+        normalized_attention_weights_A_d = tf.nn.softmax(tf.transpose(affinity_matrix_L))
+        attention_contexts_C_q = tf.matmul( contexts, normalized_attention_weights_A_q)
+
+        # 2l x (n+1) dot (n + 1)(m + 1) -> (2l x (m + 1) )
+        coattention_context_C_d = tf.matmul( tf.concat( [questions, attention_contexts_C_q], 1 ), normalized_attention_weights_A_d)
+
+        # Forward direction cell
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+        # Backward direction cell
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+        D_C_d = tf.concat( [questions, coattention_context_C_d], 1 )
+        #U, _, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, dtype=tf.float64)
+        return D_C_d #U 
 
 class Decoder(object):
     def __init__(self, output_size):
@@ -83,7 +110,7 @@ class Decoder(object):
         return
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, embed_path):
+    def __init__(self, encoder, decoder, mixer, embed_path):
         """
         Initializes your System
 
@@ -92,21 +119,25 @@ class QASystem(object):
         :param args: pass in more arguments as needed
         """
         self.encoder = encoder
+        self.mixer = mixer
         self.pretrained_embeddings = np.load(embed_path)["glove"]
 
         # ==== set up placeholder tokens ========
 
         self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
-        self.question_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
+        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, None))
-        self.context_mask_placeholder = tf.placeholder(tf.bool, shape=(None, None))
+        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answers_placeholder = tf.placeholder(tf.int32, shape=(None, 2))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             question_embeddings_lookup, context_embeddings_lookup = self.setup_embeddings()
-            self.setup_system(question_embeddings_lookup, context_embeddings_lookup)
-            self.setup_loss()
+            self.setup_system(
+                question_embeddings_lookup,
+                context_embeddings_lookup,
+            )
+            #self.setup_loss()
 
         # ==== set up training/updating procedure ====
         pass
@@ -119,8 +150,19 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        self.encoder.encode(question_embeddings_lookup, context_embeddings_lookup)
-        raise NotImplementedError("Connect all parts of your system here!")
+        bilstm_encoded_questions, bilstm_encoded_contexts = self.encoder.encode(
+            question_embeddings_lookup,
+            self.questions_lengths_placeholder,
+            context_embeddings_lookup,
+            self.context_lengths_placeholder
+        )
+
+        self.bilstm_encoded_questions = bilstm_encoded_questions
+        self.bilstm_encoded_contexts = bilstm_encoded_contexts
+
+        self.network = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts) 
+#
+#        raise NotImplementedError("Connect all parts of your system here!")
 
 
     def setup_loss(self):
@@ -246,6 +288,23 @@ class QASystem(object):
 
         return f1, em
 
+
+    def test_encoders_and_mixer(self, session, dataset):
+        feed_dict = {
+            self.question_placeholder: dataset['questions'],
+            self.questions_lengths_placeholder: dataset['question_lengths'],
+            self.context_placeholder: dataset['contexts'],
+            self.context_lengths_placeholder: dataset['context_lengths'],
+        }
+        
+        print("dataset['questions']:", dataset['questions'])
+        print(self.bilstm_encoded_questions.get_shape())
+
+#        print_questions_shape = tf.Print(self.bilstm_encoded_questions, [ tf.shape(self.bilstm_encoded_questions) ], message="shape", summarize=500)
+#        output = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts, print_questions], feed_dict)
+        print_debug_output = tf.Print(self.network, [self.network], summarize=500)
+        output = session.run([self.network, print_debug_output ], feed_dict)
+
     def train(self, session, dataset, train_dir):
         """
         Implement main training loop
@@ -274,7 +333,6 @@ class QASystem(object):
         # you will also want to save your model parameters in train_dir
         # so that you can use your trained model to make predictions, or
         # even continue training
-
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))

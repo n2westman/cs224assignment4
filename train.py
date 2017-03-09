@@ -89,27 +89,42 @@ def main(_):
     # Creates a dataset. One datum looks as follows: datum1 = [context_word_ids, question_word_ids, answer_span]
     # Then the whole dataset is a NumPy array of this structure: [(datum1), (datum2), ..]
 
-    train_or_val = "train" # takes either 'train' or 'val'
+    train_or_val = "train" # Takes either 'train' or 'val'
     print("Loading dataset: " + train_or_val)
-
     context_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.context"
     question_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.question"
     answer_span_file = FLAGS.data_dir + "/" + train_or_val + ".span"
 
-    #dataset = np.empty([0,3])
-    dataset = []
+    dataset = {
+        'questions': [],
+        'question_lengths': [],
+        'contexts': [],
+        'context_lengths': [], 
+        'answers': []
+    }
+
+#    max_context_length = 0
+#    max_question_length = 0
+
+    # Create basic dataset
+    # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
+    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
 
     with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
-            context = context.strip()
-            question = question.strip()
-            answer = answer.strip()
-            #print("{0}\t{1}\t{2}".format(context, question, answer))
-            datum = (context.split(), question.split(), answer.split())
-            dataset.append(datum)
-            #dataset = np.vstack((dataset, datum))
-    dataset = np.array(dataset)
-    print("Dataset loaded, size: " + str(dataset.shape))
+            context = context.split()
+            question = question.split()
+            answer = answer.split()
+            dataset['questions'].append(question)
+            dataset['question_lengths'].append(len(question))
+            dataset['contexts'].append(context)
+            dataset['context_lengths'].append(len(context))
+
+            # REMOVE. This is a test:
+            break
+    
+#    dataset = np.array(dataset)
+#    print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
@@ -135,9 +150,13 @@ def main(_):
         initialize_model(sess, qa, load_train_dir)
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
-        qa.train(sess, dataset, save_train_dir)
 
-        qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
+        # Test encoders code.
+        qa.test_encoders_and_mixer(sess, dataset)
+
+        #qa.train(sess, dataset, save_train_dir)
+
+        #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 
 if __name__ == "__main__":
     tf.app.run()
