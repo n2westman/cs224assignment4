@@ -109,7 +109,6 @@ def main(_):
     # Create basic dataset
     # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
     # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
-
     with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
             context = context.split()
@@ -120,7 +119,7 @@ def main(_):
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
 
-            # REMOVE. This is a test:
+            # REMOVE. This is a test using a single-item batch:
             break
     
 #    dataset = np.array(dataset)
