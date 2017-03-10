@@ -101,7 +101,8 @@ def main(_):
         'question_lengths': [],
         'contexts': [],
         'context_lengths': [], 
-        'answers': []
+        'answer_starts': [],
+        'answer_ends': []
     }
 
 #    max_context_length = 0
@@ -128,6 +129,12 @@ def main(_):
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
+            answer_starts = [0] * len(context)
+            answer_starts[int(answer[0])] = 1
+            answer_ends = [0] * len(context)
+            answer_ends[int(answer[1])] = 1
+            dataset['answer_starts'].append(answer_starts)
+            dataset['answer_ends'].append(answer_ends)
 
             # Padding length tracker
             if ADD_PADDING:
@@ -148,6 +155,12 @@ def main(_):
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+        for answer_start in dataset['answer_starts']:
+            answer_start.extend([0] * (max_context_length - len(answer_start)))
+        for answer_end in dataset['answer_ends']:
+            answer_end.extend([0] * (max_context_length - len(answer_end)))
+
+    
     # dataset = np.array(dataset)
     # print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
