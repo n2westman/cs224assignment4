@@ -106,15 +106,17 @@ class Mixer(object):
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        U, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float64)
-        return tf.concat(U, 2) #U 
+        U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float64)
+        # This gets the final forward & backward hidden states from the output, and concatenates them
+        U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
+        return tf.concat(U, 2), U_final_hidden
 
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
         self.n_hidden_dec = 50
 
-    def decode(self, coattention_encoding, context_lengths):
+    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -129,35 +131,61 @@ class Decoder(object):
 
         # Dimensionalities:
         # coattention_encoding: samples x context_words x 2*n_hidden_mix
+        # coattention_encoding_final_states: samples x 2*n_hidden_mix
         # decoder_output_concat: samples x context_words x 2*n_hidden_dec
 
-        with tf.variable_scope("DecoderBiLSTM"):
-            # Forward direction cell
-            decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec, forget_bias=1.0)
-            # Backward direction cell
-            decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec, forget_bias=1.0)
+        num_samples = coattention_encoding.get_shape()[0]
+        max_context_words = coattention_encoding.get_shape()[1]
+        n_hidden_mix = coattention_encoding.get_shape()[2]
 
-            decoder_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding,
-                                                  sequence_length=context_lengths, dtype=tf.float64)
+        # What do we want to do here? Create a simple regression / single layer neural net
+        # We have U_final = samples x 2*n_hidden_mix input
+        # We want to do h = relu(U * W + b1)
+        # Here, W has to be 2*n_hidden_mix x n_hidden_dec
+        # b has to be n_hidden_dec
 
-        decoder_output_concat = tf.concat(decoder_output, 2)
+        U = coattention_encoding
+        U_final = coattention_encoding_final_states
+        W_shape = (n_hidden_mix, self.n_hidden_dec)
+        b1_shape = (1, self.n_hidden_dec)
 
-        # max_context_length = tf.reduce_max(context_lengths)
-        # W_shape = (2 * self.n_hidden_dec, 1)
-        # b_shape = (max_context_length, 1)
+        # Then we want to get our outputs as a context_words vector
+        # We do pred = h * V + b2
+        # We create V with dimensions: n_hidden_dec x context_words
+        # Also b2 with dimensions context_words
+        
+        V_shape = (self.n_hidden_dec, max_context_words)
+        b2_shape = (1, max_context_words)
 
-        # self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
-        # self.b = tf.Variable(tf.zeros(b_shape, dtype = tf.float64))
+        # We want to do this for start and end prediction
+        with tf.variable_scope("StartPredictor"):
+            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
+            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float64))
+            # UW and UWb1 dimensionality: samples x n_hidden_dec
+            UW = tf.matmul(U_final, self.W)
+            UWb1 = tf.add(UW, self.b1)
+            h = tf.nn.relu(UWb1) # samples x n_hidden_dec
+            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
+            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float64))
+            hV = tf.matmul(h, self.V)
+            self.start_pred = tf.add(hV, self.b2) # samples x context_words
 
-        # decoder_output_concat_2D = tf.reshape(decoder_output_concat, [-1, 2 * self.n_hidden_dec])
-        # xW_2D = tf.matmul(decoder_output_concat_2D, self.W)
-        # xW = tf.reshape(xW_2D, [-1, max_context_length, 2 * self.n_hidden_dec])
-        # xWb = tf.add(xW, self.b)
-
-        return decoder_output_concat
+        with tf.variable_scope("EndPredictor"):
+            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
+            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float64))
+            # UW and UWb1 dimensionality: samples x n_hidden_dec
+            UW = tf.matmul(U_final, self.W)
+            UWb1 = tf.add(UW, self.b1)
+            h = tf.nn.relu(UWb1) # samples x n_hidden_dec
+            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
+            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float64))
+            hV = tf.matmul(h, self.V)
+            self.end_pred = tf.add(hV, self.b2) # samples x context_words
+        
+        return self.start_pred, self.end_pred
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path):
+    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length):
         """
         Initializes your System
 
@@ -174,7 +202,7 @@ class QASystem(object):
 
         self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, max_context_length))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answer_starts_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.answer_ends_placeholder = tf.placeholder(tf.int32, shape=(None, None))
@@ -186,6 +214,7 @@ class QASystem(object):
                 question_embeddings_lookup,
                 context_embeddings_lookup
             )
+            self.setup_loss()
             #self.setup_loss()
 
         # ==== set up training/updating procedure ====
@@ -212,23 +241,21 @@ class QASystem(object):
         self.bilstm_encoded_questions = bilstm_encoded_questions
         self.bilstm_encoded_contexts = bilstm_encoded_contexts
 
-        self.coattention_encoding = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
-        self.network = self.decoder.decode(self.coattention_encoding, self.context_lengths_placeholder)
+        self.coattention_encoding, self.coattention_encoding_final_states = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        self.start_prediction, self.end_prediction = self.decoder.decode(self.coattention_encoding, self.coattention_encoding_final_states, self.context_lengths_placeholder)
 
 #
 #        raise NotImplementedError("Connect all parts of your system here!")
-
 
     def setup_loss(self):
         """
         Set up your loss computation here
         :return:
         """
-        with vs.variable_scope("loss"):
-            # jorisvanmens: This is entirely untested code
-            sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(answer_starts_pred, self.answer_starts_placeholder)
-            sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(answer_ends_pred, self.answer_ends_placeholder)
-            loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
+        # jorisvanmens: This is entirely untested code
+        sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answer_starts_placeholder)
+        sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answer_ends_placeholder)
+        self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
 
     def setup_embeddings(self):
         """
@@ -346,7 +373,7 @@ class QASystem(object):
         return f1, em
 
 
-    def test_encoders_and_mixer(self, session, dataset):
+    def test_the_graph(self, session, dataset):
         feed_dict = {
             self.question_placeholder: dataset['questions'],
             self.questions_lengths_placeholder: dataset['question_lengths'],
@@ -365,9 +392,10 @@ class QASystem(object):
         # bilstm_encoded_contexts: samples x words x 2*n_hidden_enc
 
         # print_debug_output = tf.Print(self.network, [self.network], summarize=500)
-        
-        out1 = session.run([self.network], feed_dict)
+        #t()
+        out1 = session.run([self.loss], feed_dict)
         print("Final layer shape:", out1[0].shape)
+        print("Loss: ", out1[0])
         #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)        
         
         #print("dataset['questions']:", dataset['questions'])
