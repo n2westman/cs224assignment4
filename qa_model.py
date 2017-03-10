@@ -128,8 +128,8 @@ class Decoder(object):
         """
 
         # Dimensionalities:
-        # coattention_encoding: samples x context_words x 2*n_hidden_mix (it's packed in like this: ((data)), for some reason)
-        # return value: samples x context_words x 2*n_hidden_dec
+        # coattention_encoding: samples x context_words x 2*n_hidden_mix
+        # decoder_output_concat: samples x context_words x 2*n_hidden_dec
 
         with tf.variable_scope("DecoderBiLSTM"):
             # Forward direction cell
@@ -140,7 +140,21 @@ class Decoder(object):
             decoder_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding,
                                                   sequence_length=context_lengths, dtype=tf.float64)
 
-        return tf.concat(decoder_output, 2)
+        decoder_output_concat = tf.concat(decoder_output, 2)
+
+        # max_context_length = tf.reduce_max(context_lengths)
+        # W_shape = (2 * self.n_hidden_dec, 1)
+        # b_shape = (max_context_length, 1)
+
+        # self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
+        # self.b = tf.Variable(tf.zeros(b_shape, dtype = tf.float64))
+
+        # decoder_output_concat_2D = tf.reshape(decoder_output_concat, [-1, 2 * self.n_hidden_dec])
+        # xW_2D = tf.matmul(decoder_output_concat_2D, self.W)
+        # xW = tf.reshape(xW_2D, [-1, max_context_length, 2 * self.n_hidden_dec])
+        # xWb = tf.add(xW, self.b)
+
+        return decoder_output_concat
 
 class QASystem(object):
     def __init__(self, encoder, decoder, mixer, embed_path):
@@ -162,7 +176,8 @@ class QASystem(object):
         self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.answers_placeholder = tf.placeholder(tf.int32, shape=(None, 2))
+        self.answer_starts_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.answer_ends_placeholder = tf.placeholder(tf.int32, shape=(None, None))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -210,7 +225,10 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("loss"):
-            pass
+            # jorisvanmens: This is entirely untested code
+            sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(answer_starts_pred, self.answer_starts_placeholder)
+            sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(answer_ends_pred, self.answer_ends_placeholder)
+            loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
 
     def setup_embeddings(self):
         """
@@ -334,6 +352,8 @@ class QASystem(object):
             self.questions_lengths_placeholder: dataset['question_lengths'],
             self.context_placeholder: dataset['contexts'],
             self.context_lengths_placeholder: dataset['context_lengths'],
+            self.answer_starts_placeholder: dataset['answer_starts'],
+            self.answer_ends_placeholder: dataset['answer_ends']
         }
 
         # Dimensionalities:
@@ -387,3 +407,4 @@ class QASystem(object):
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
+
