@@ -49,18 +49,18 @@ class Encoder(object):
         """
         with tf.variable_scope("QuestionEncoderBiLSTM"):
             # Forward direction cell
-            question_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            question_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
             # Backward direction cell
-            question_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            question_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
 
             question_outputs, _, = tf.nn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings,
                                                   sequence_length=question_lengths, dtype=tf.float64)
 
         with tf.variable_scope("AnswerEncoderBiLSTM"):
             # Forward direction cell
-            context_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            context_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
             # Backward direction cell
-            context_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+            context_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
 
             context_outputs, _, = tf.nn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings,
                                                   sequence_length=context_lengths, dtype=tf.float64)
@@ -97,23 +97,24 @@ class Mixer(object):
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
         # Forward direction cell
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
         # Backward direction cell
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden, forget_bias=1.0)
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
         
         # Dimensionalities:
         # D_C_d: samples x context_words x 3*2*n_hidden_enc
-        # U: samples x context_words x 2*n_hidden_mix (packed in like this: ((data)), for some reason)
+        # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
         U, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float64)
-        return U #U 
+        return tf.concat(U, 2) #U 
 
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
+        self.n_hidden_dec = 50
 
-    def decode(self, knowledge_rep):
+    def decode(self, coattention_encoding, context_lengths):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -126,7 +127,20 @@ class Decoder(object):
         :return:
         """
 
-        return
+        # Dimensionalities:
+        # coattention_encoding: samples x context_words x 2*n_hidden_mix (it's packed in like this: ((data)), for some reason)
+        # return value: samples x context_words x 2*n_hidden_dec
+
+        with tf.variable_scope("DecoderBiLSTM"):
+            # Forward direction cell
+            decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec, forget_bias=1.0)
+            # Backward direction cell
+            decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec, forget_bias=1.0)
+
+            decoder_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding,
+                                                  sequence_length=context_lengths, dtype=tf.float64)
+
+        return tf.concat(decoder_output, 2)
 
 class QASystem(object):
     def __init__(self, encoder, decoder, mixer, embed_path):
@@ -139,6 +153,7 @@ class QASystem(object):
         """
         self.encoder = encoder
         self.mixer = mixer
+        self.decoder = decoder
         self.pretrained_embeddings = np.load(embed_path)["glove"]
 
         # ==== set up placeholder tokens ========
@@ -182,7 +197,9 @@ class QASystem(object):
         self.bilstm_encoded_questions = bilstm_encoded_questions
         self.bilstm_encoded_contexts = bilstm_encoded_contexts
 
-        self.network = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        self.coattention_encoding = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        self.network = self.decoder.decode(self.coattention_encoding, self.context_lengths_placeholder)
+
 #
 #        raise NotImplementedError("Connect all parts of your system here!")
 
@@ -330,12 +347,9 @@ class QASystem(object):
         # print_debug_output = tf.Print(self.network, [self.network], summarize=500)
         
         out1 = session.run([self.network], feed_dict)
+        print("Final layer shape:", out1[0].shape)
         #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)        
-        #t()
-        print(out1.shape)
-        #print(out2.shape)
-
-        #t()
+        
         #print("dataset['questions']:", dataset['questions'])
         #print("question_placeholder", self.question_placeholder.get_shape())
         #print("bilmst_enc_qs", self.bilstm_encoded_questions.get_shape())
