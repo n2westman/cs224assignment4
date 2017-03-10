@@ -114,8 +114,10 @@ def main(_):
 
     LIMIT_SAMPLES = True
     ADD_PADDING = True
+    FIXED_CONTEXT_SIZE = True
 
-    num_samples = 3
+    num_samples = 1000
+    context_size = 500
 
     max_context_length = 0
     max_question_length = 0
@@ -127,28 +129,37 @@ def main(_):
             answer = answer.split()
             dataset['questions'].append(question)
             dataset['question_lengths'].append(len(question))
-            dataset['contexts'].append(context)
-            dataset['context_lengths'].append(len(context))
             answer_starts = [0] * len(context)
             answer_starts[int(answer[0])] = 1
             answer_ends = [0] * len(context)
             answer_ends[int(answer[1])] = 1
+
+            # Trim context variables
+            if FIXED_CONTEXT_SIZE:
+                max_context_length = context_size
+                del context[max_context_length:]
+                del answer_starts[max_context_length:]
+                del answer_ends[max_context_length:]
+
+            dataset['contexts'].append(context)
+            dataset['context_lengths'].append(len(context))
             dataset['answer_starts'].append(answer_starts)
             dataset['answer_ends'].append(answer_ends)
 
-            # Padding length tracker
+            # Track dynamic lengths for adding padding later on
             if ADD_PADDING:
-                if len(context) > max_context_length:
-                    max_context_length = len(context)
                 if len(question) > max_question_length:
                     max_question_length = len(question)
+                if not FIXED_CONTEXT_SIZE:
+                    if len(context) > max_context_length:
+                        max_context_length = len(context)
     
             # Limit samples
             if LIMIT_SAMPLES:
                 num_samples = num_samples - 1
                 if num_samples == 0:
                     break
-
+    
     # Add padding
     if ADD_PADDING:
         for question in dataset['questions']:
@@ -162,6 +173,8 @@ def main(_):
 
     
     # dataset = np.array(dataset)
+    #print "LEN"
+    #print(len(dataset['contexts'][0]))
     # print("Dataset loaded, size: " + str(dataset.shape))
     # --------------------End of my code (jorisvanmens)
 
@@ -173,7 +186,7 @@ def main(_):
     decoder = Decoder(output_size=FLAGS.output_size)
     mixer = Mixer()
 
-    qa = QASystem(encoder, decoder, mixer, embed_path)
+    qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length)
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
@@ -191,7 +204,7 @@ def main(_):
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
         # Test encoders code.
-        qa.test_encoders_and_mixer(sess, dataset)
+        qa.test_the_graph(sess, dataset)
 
         #qa.train(sess, dataset, save_train_dir)
 
@@ -199,4 +212,3 @@ def main(_):
 
 if __name__ == "__main__":
     tf.app.run()
-    
