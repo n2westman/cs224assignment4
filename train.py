@@ -102,15 +102,16 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
         'question_lengths': [],
         'contexts': [],
         'context_lengths': [], 
-        'answer_starts': [],
-        'answer_ends': []
+        'answer_starts_onehot': [],
+        'answer_ends_onehot': [],
+        'answers_numeric_list': [],
     }
 
     # Parameters
     LIMIT_SAMPLES = False # Don't load full dataset, but only num_samples (for testing)
     ADD_PADDING = True # Add padding to make all questions and contexts the same length
     FIXED_CONTEXT_SIZE = True # Remove contexts longer than context_size (I don't think this can be turned off anymore)
-    num_samples = 3 # Only relevant for LIMIT_SAMPLES
+    num_samples = 1000 # Only relevant for LIMIT_SAMPLES
     context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
     min_input_length = 3 # Remove questions & contexts smaller than this
 
@@ -126,28 +127,30 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
             if len(context) < min_input_length or len(question) < min_input_length:
                 continue
 
-            answer_starts = [0] * len(context)
-            answer_starts[int(answer[0])] = 1
-            answer_ends = [0] * len(context)
-            answer_ends[int(answer[1])] = 1
-
             # Don't use malformed answers
             if int(answer[0]) > int(answer[1]):
                 continue
+
+            # Create onehot answer start and end vectors
+            answer_start_onehot = [0] * len(context)
+            answer_start_onehot[int(answer[0])] = 1
+            answer_end_onehot = [0] * len(context)
+            answer_end_onehot[int(answer[1])] = 1
 
             # Trim context variables
             if FIXED_CONTEXT_SIZE:
                 max_context_length = context_size
                 del context[max_context_length:]
-                del answer_starts[max_context_length:]
-                del answer_ends[max_context_length:]
+                del answer_start_onehot[max_context_length:]
+                del answer_end_onehot[max_context_length:]
 
             dataset['questions'].append(question)
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
-            dataset['answer_starts'].append(answer_starts)
-            dataset['answer_ends'].append(answer_ends)
+            dataset['answer_starts_onehot'].append(answer_start_onehot)
+            dataset['answer_ends_onehot'].append(answer_end_onehot)
+            dataset['answers_numeric_list'].append(answer)
 
             # Track dynamic lengths for adding padding later on
             if ADD_PADDING:
@@ -169,9 +172,9 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
-        for answer_start in dataset['answer_starts']:
+        for answer_start in dataset['answer_starts_onehot']:
             answer_start.extend([0] * (max_context_length - len(answer_start)))
-        for answer_end in dataset['answer_ends']:
+        for answer_end in dataset['answer_ends_onehot']:
             answer_end.extend([0] * (max_context_length - len(answer_end)))
 
     print("Dataset loaded with", str(len(dataset['contexts'])), "samples")
