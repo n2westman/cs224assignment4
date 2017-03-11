@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import time
 import logging
+import random
 
 import numpy as np
 from six.moves import xrange  # pylint: disable=redefined-builtin
@@ -317,6 +318,7 @@ class QASystem(object):
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answer_starts_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.answer_ends_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -342,15 +344,17 @@ class QASystem(object):
                 'question_lengths': [],
                 'contexts': [],
                 'context_lengths': [], 
-                'answer_starts': [],
-                'answer_ends': []
+                'answer_starts_onehot': [],
+                'answer_ends_onehot': [],
+                'answers_numeric_list': []
             }
             batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
             batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
             batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
             batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
-            batch['answer_starts'] = dataset['answer_starts'][start_index:start_index + batch_size]
-            batch['answer_ends'] = dataset['answer_ends'][start_index:start_index + batch_size]
+            batch['answer_starts_onehot'] = dataset['answer_starts_onehot'][start_index:start_index + batch_size]
+            batch['answer_ends_onehot'] = dataset['answer_ends_onehot'][start_index:start_index + batch_size]
+            batch['answers_numeric_list'] = dataset['answers_numeric_list'][start_index:start_index + batch_size]
             batches.append(batch)
 
         print("Created", str(len(batches)), "batches")
@@ -428,9 +432,9 @@ class QASystem(object):
 
     def setup_train_op(self):
         learning_rate = 0.5
-        #optimizer = get_optimizer("sgd")
-        optimizer = tf.train.GradientDescentOptimizer(0.5)
-        self.train_op = optimizer.minimize(self.loss)
+        optimizer = get_optimizer("adam")
+        #optimizer = tf.train.AdamOptimizer(0.5)
+        self.train_op = optimizer().minimize(self.loss)
         return self.train_op
 
     def optimize(self, session, train_x, train_y):
@@ -513,7 +517,7 @@ class QASystem(object):
 
         return valid_cost
 
-    def evaluate_answer(self, session, dataset, sample=100, log=False):
+    def evaluate_answer(self, session, data_batches, sample=100, log=True):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -529,13 +533,64 @@ class QASystem(object):
         :return:
         """
 
+        # jorisvanmens: I built this function from scratch (not conform original "specification")
+
         f1 = 0.
         em = 0.
+
+        test_batch = random.choice(data_batches)
+        feed_dict = self.prep_feed_dict_from_batch(test_batch)
+        answer_start_predictions, answer_end_predictions, answers_numeric_list = \
+            session.run([self.start_prediction, self.end_prediction, self.answers_numeric_list], feed_dict)
+        
+        answer_start_predictions_numeric = np.argmax(answer_start_predictions, axis = 1)
+        answer_end_predictions_numeric = np.argmax(answer_end_predictions, axis = 1)
+        f1s = []
+        ems = []
+
+        for idx, answer_numeric in enumerate(answers_numeric_list):
+            prediction = [answer_start_predictions_numeric[idx], answer_end_predictions_numeric[idx]]
+            em = 0
+            if prediction[0] == answer_numeric[0] and prediction[1] == answer_numeric[1]:
+                em = 1
+            f1 = 0
+            prediction_range = range(prediction[0], prediction[1] + 1)
+            answer_range = range(answer_numeric[0], answer_numeric[1] + 1)
+            num_same = len(set(prediction_range) & set(answer_range))
+            if len(prediction_range) == 0:
+                precision = 0
+            else: 
+                precision = 1.0 * num_same / len(prediction_range)
+            if len(answer_range) == 0:
+                recall = 0
+            else:
+                recall = 1.0 * num_same / len(answer_range)
+            if precision + recall == 0:
+                f1 = 0
+            else:
+                f1 = (2 * precision * recall) / (precision + recall)
+            f1s.append(f1)
+            ems.append(em)
+
+        f1 = sum(f1s) / len(f1s) * 100
+        em = sum(ems) / len(ems) * 100
 
         if log:
             logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
 
         return f1, em
+
+    def prep_feed_dict_from_batch(self, batch):
+        feed_dict = {
+            self.question_placeholder: batch['questions'],
+            self.questions_lengths_placeholder: batch['question_lengths'],
+            self.context_placeholder: batch['contexts'],
+            self.context_lengths_placeholder: batch['context_lengths'],
+            self.answer_starts_placeholder: batch['answer_starts_onehot'],
+            self.answer_ends_placeholder: batch['answer_ends_onehot'],
+            self.answers_numeric_list: batch['answers_numeric_list']
+        }
+        return feed_dict
 
 
     def test_the_graph(self, session, dataset):
@@ -544,14 +599,7 @@ class QASystem(object):
         data_batches = self.split_in_batches(dataset, batch_size)
         data_input = data_batches[0]
 
-        feed_dict = {
-            self.question_placeholder: data_input['questions'],
-            self.questions_lengths_placeholder: data_input['question_lengths'],
-            self.context_placeholder: data_input['contexts'],
-            self.context_lengths_placeholder: data_input['context_lengths'],
-            self.answer_starts_placeholder: data_input['answer_starts'],
-            self.answer_ends_placeholder: data_input['answer_ends']
-        }
+        prep_feed_dict_from_batch(data_input)
 
         # Dimensionalities:
         # question_placeholder: samples x words
@@ -602,6 +650,7 @@ class QASystem(object):
         # even continue training
 
         batch_size = 100
+        evaluate_after_batches = 10 # Note one evaluation takes as much time
         data_batches = self.split_in_batches(dataset, batch_size)
 
         tic = time.time()
@@ -611,14 +660,12 @@ class QASystem(object):
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
         for idx, batch in enumerate(data_batches):
-            feed_dict = {
-                self.question_placeholder: batch['questions'],
-                self.questions_lengths_placeholder: batch['question_lengths'],
-                self.context_placeholder: batch['contexts'],
-                self.context_lengths_placeholder: batch['context_lengths'],
-                self.answer_starts_placeholder: batch['answer_starts'],
-                self.answer_ends_placeholder: batch['answer_ends']
-            }
+            tic = time.time()
+            feed_dict = self.prep_feed_dict_from_batch(batch)
             _, current_loss = session.run([self.train_op, self.loss], feed_dict)
-            print("Batch", str(idx), "done with", current_loss, "loss")
+            toc = time.time()
+            print("Batch", str(idx), "done with", current_loss, "loss (took", str(format(toc - tic, '.2f')), "seconds)")
+            if (idx + 1) % evaluate_after_batches == 0:
+                f1, em = self.evaluate_answer(session, data_batches)
+                print("F1:", f1, " EM:", em)
 
