@@ -333,6 +333,28 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         pass
 
+    def split_in_batches(self, dataset, batch_size):
+        batches = []
+        for start_index in range(0, len(dataset['questions']), batch_size):
+            batch = {
+                'questions': [],
+                'question_lengths': [],
+                'contexts': [],
+                'context_lengths': [], 
+                'answer_starts': [],
+                'answer_ends': []
+            }
+            batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
+            batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
+            batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
+            batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
+            batch['answer_starts'] = dataset['answer_starts'][start_index:start_index + batch_size]
+            batch['answer_ends'] = dataset['answer_ends'][start_index:start_index + batch_size]
+            batches.append(batch)
+
+        print("Created", str(len(batches)), "batches")
+        return batches
+
 
     def setup_system(self, question_embeddings_lookup, context_embeddings_lookup):
         """
@@ -363,7 +385,7 @@ class QASystem(object):
         Set up your loss computation here
         :return:
         """
-        # jorisvanmens: This is entirely untested code
+        # jorisvanmens: This is not really tested, although it does seem to work
         sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answer_starts_placeholder)
         sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answer_ends_placeholder)
         self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
@@ -509,13 +531,18 @@ class QASystem(object):
 
 
     def test_the_graph(self, session, dataset):
+
+        batch_size = 100
+        data_batches = self.split_in_batches(dataset, batch_size)
+        data_input = data_batches[0]
+
         feed_dict = {
-            self.question_placeholder: dataset['questions'],
-            self.questions_lengths_placeholder: dataset['question_lengths'],
-            self.context_placeholder: dataset['contexts'],
-            self.context_lengths_placeholder: dataset['context_lengths'],
-            self.answer_starts_placeholder: dataset['answer_starts'],
-            self.answer_ends_placeholder: dataset['answer_ends']
+            self.question_placeholder: data_input['questions'],
+            self.questions_lengths_placeholder: data_input['question_lengths'],
+            self.context_placeholder: data_input['contexts'],
+            self.context_lengths_placeholder: data_input['context_lengths'],
+            self.answer_starts_placeholder: data_input['answer_starts'],
+            self.answer_ends_placeholder: data_input['answer_ends']
         }
 
         # Dimensionalities:
@@ -545,7 +572,7 @@ class QASystem(object):
         You should also implement learning rate annealing (look into tf.train.exponential_decay)
         Considering the long time to train, you should save your model per epoch.
 
-        More ambitious appoarch can include implement early stopping, or reload
+        More ambitious approach can include implement early stopping, or reload
         previous models if they have higher performance than the current one
 
         As suggested in the document, you should evaluate your training progress by
@@ -565,9 +592,27 @@ class QASystem(object):
         # you will also want to save your model parameters in train_dir
         # so that you can use your trained model to make predictions, or
         # even continue training
+
+        batch_size = 100
+        data_batches = self.split_in_batches(dataset, batch_size)
+
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
+
+        for idx, batch in enumerate(data_batches):
+            feed_dict = {
+                self.question_placeholder: batch['questions'],
+                self.questions_lengths_placeholder: batch['question_lengths'],
+                self.context_placeholder: batch['contexts'],
+                self.context_lengths_placeholder: batch['context_lengths'],
+                self.answer_starts_placeholder: batch['answer_starts'],
+                self.answer_ends_placeholder: batch['answer_ends']
+            }
+            current_loss = session.run([self.loss], feed_dict)
+            print("Batch", str(idx), "done with", current_loss, "loss")
+
+
 
