@@ -179,36 +179,12 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
     return dataset
 
 
-def split_in_batches(dataset, batch_size):
-    batches = []
-    for start_index in range(0, len(dataset['questions']), batch_size):
-        batch = {
-            'questions': [],
-            'question_lengths': [],
-            'contexts': [],
-            'context_lengths': [], 
-            'answer_starts': [],
-            'answer_ends': []
-        }
-        batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
-        batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
-        batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
-        batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
-        batch['answer_starts'] = dataset['answer_starts'][start_index:start_index + batch_size]
-        batch['answer_ends'] = dataset['answer_ends'][start_index:start_index + batch_size]
-        batches.append(batch)
-
-    print("Created", str(len(batches)), "batches")
-    return batches
-
-
 def main(_):
 
     train_or_val = "train"
     batch_size = 100
     max_context_length = 600
     dataset = load_and_preprocess_dataset(train_or_val, max_context_length)
-    data_batches = split_in_batches(dataset, batch_size)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
@@ -238,12 +214,11 @@ def main(_):
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
-        # Test encoders code.
-        qa.test_the_graph(sess, data_batches[0])
-        qa.test_the_graph(sess, data_batches[1])
-        qa.test_the_graph(sess, data_batches[2])
+        # Test if the graph works with a few batches
+        #qa.test_the_graph(sess, dataset)
 
-        #qa.train(sess, dataset, save_train_dir)
+        # Train!
+        qa.train(sess, dataset, save_train_dir)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 
