@@ -28,6 +28,7 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
+# jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
 batch_size = 100
 hidden_size = 200
 maxout_size = 32
@@ -35,6 +36,7 @@ max_timesteps = 600
 max_decode_steps = 4
 
 class Encoder(object):
+    # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
     def __init__(self, size, vocab_dim):
         self.size = size
         self.vocab_dim = vocab_dim
@@ -70,12 +72,13 @@ class Encoder(object):
         return tf.concat(question_outputs, 2), tf.concat(context_outputs, 2)
 
 class Mixer(object):
+    # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
+
     def __init__(self):
             self.n_hidden_mix = 200
 
     def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
-        #questions = tf.Print( questions, [tf.shape(questions)])
 
         # Dimensionalities:
         # bilstm_encoded_questions: samples x question_words x 2*n_hidden_enc
@@ -116,6 +119,8 @@ class Mixer(object):
         return tf.concat(U, 2), U_final_hidden
 
 class Decoder(object):
+    # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
+
     def __init__(self, output_size):
         self.output_size = output_size
         self.n_hidden_dec = 600
@@ -190,6 +195,9 @@ class Decoder(object):
 
 
 class HMNDecoder(object):
+    # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
+    # based on co-attention paper
+
     def __init__(self, output_size):
         self.output_size = output_size
         self.n_hidden_dec = 50
@@ -206,7 +214,7 @@ class HMNDecoder(object):
                               decided by how you choose to implement the encoder
         :return:
         """
-        # coattention_encoding: samples x context_words x 2*n_hidden_mix (it's packed in like this: ((data)), for some reason)
+        # coattention_encoding: samples x context_words x 2*n_hidden_mix
         # return value: samples x context_words x 2*n_hidden_dec
         self._initial_guess = np.zeros((2, batch_size), dtype=np.int32)
         self._u = coattention_encoding
@@ -337,6 +345,8 @@ class QASystem(object):
         pass
 
     def split_in_batches(self, dataset, batch_size):
+        # jorisvanmens: splits a dataset into batches of batch_size (code by Joris)
+
         batches = []
         for start_index in range(0, len(dataset['questions']), batch_size):
             batch = {
@@ -362,6 +372,7 @@ class QASystem(object):
 
 
     def setup_system(self, question_embeddings_lookup, context_embeddings_lookup):
+        # jorisvanmens: sets up parts of the graph (code by Ilya & Joris)
         """
         After your modularized implementation of encoder and decoder
         you should call various functions inside encoder, decoder here
@@ -386,16 +397,19 @@ class QASystem(object):
 
 
     def setup_loss(self):
+        # jorisvanmens: calculates loss for the neural net decoder (code by Joris)
+        # jorisvanmens: this is not tested at all (like most parts of the code really, haha)
         """
         Set up your loss computation here
         :return:
         """
-        # jorisvanmens: This is not really tested, although it does seem to work
         sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answer_starts_placeholder)
         sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answer_ends_placeholder)
         self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
 
     def setup_hmn_loss(self):
+        # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
+        # based on co-attention paper
         def _loss_shared(logits, labels):
           labels = tf.Print( labels, [tf.shape(labels)] )
           labels = tf.reshape(labels, [batch_size])
@@ -420,6 +434,7 @@ class QASystem(object):
 
 
     def setup_embeddings(self):
+        # jorisvanmens: looks up embeddings (code by Ilya)
         """
         Loads distributed word representations based on placeholder tokens
         :return:
@@ -431,6 +446,7 @@ class QASystem(object):
             return question_embeddings_lookup, context_embeddings_lookup
 
     def setup_train_op(self):
+        # jorisvanmens: training operation for minimizing loss (code by Joris)
         learning_rate = 0.5
         optimizer = get_optimizer("adam")
         #optimizer = tf.train.AdamOptimizer(0.5)
@@ -438,6 +454,7 @@ class QASystem(object):
         return self.train_op
 
     def optimize(self, session, train_x, train_y):
+        # jorisvanmens: prefab code, not used
         """
         Takes in actual data to optimize your model
         This method is equivalent to a step() function
@@ -455,6 +472,7 @@ class QASystem(object):
         return outputs
 
     def test(self, session, valid_x, valid_y):
+        # jorisvanmens: prefab code, not used
         """
         in here you should compute a cost for your validation set
         and tune your hyperparameters according to the validation set performance
@@ -472,6 +490,7 @@ class QASystem(object):
         return outputs
 
     def decode(self, session, test_x):
+        # jorisvanmens: prefab code, not used
         """
         Returns the probability distribution over different positions in the paragraph
         so that other methods like self.answer() will be able to work properly
@@ -489,6 +508,7 @@ class QASystem(object):
         return outputs
 
     def answer(self, session, test_x):
+        # jorisvanmens: prefab code, not used
 
         yp, yp2 = self.decode(session, test_x)
 
@@ -498,6 +518,7 @@ class QASystem(object):
         return (a_s, a_e)
 
     def validate(self, sess, valid_dataset):
+        # jorisvanmens: prefab code, not used
         """
         Iterate through the validation dataset and determine what
         the validation cost is.
@@ -518,6 +539,7 @@ class QASystem(object):
         return valid_cost
 
     def evaluate_answer(self, session, data_batches, sample=100, log=True):
+        # jorisvanmens: calculate F1 and EM on a random batch (code by Joris)
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -532,8 +554,6 @@ class QASystem(object):
         :param log: whether we print to std out stream
         :return:
         """
-
-        # jorisvanmens: I built this function from scratch (not conform original "specification")
 
         f1 = 0.
         em = 0.
@@ -594,6 +614,7 @@ class QASystem(object):
 
 
     def test_the_graph(self, session, dataset):
+        # jorisvanmens: function we used for testing while we were setting up the graph, not used for actual training
 
         batch_size = 100
         data_batches = self.split_in_batches(dataset, batch_size)
@@ -621,6 +642,8 @@ class QASystem(object):
         #print("bilmst_enc_qs", self.bilstm_encoded_questions.get_shape())
 
     def train(self, session, dataset, train_dir):
+        # jorisvanmens: actual training function, this is where the time is spent (code by Joris)
+        # needs a lot more work
         """
         Implement main training loop
 
@@ -653,12 +676,14 @@ class QASystem(object):
         evaluate_after_batches = 10 # Note one evaluation takes as much time
         data_batches = self.split_in_batches(dataset, batch_size)
 
+        # Block of prefab code that check the number of params
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
+        # Actual training loop for 1 epoch
         for idx, batch in enumerate(data_batches):
             tic = time.time()
             feed_dict = self.prep_feed_dict_from_batch(batch)
@@ -668,3 +693,5 @@ class QASystem(object):
             if (idx + 1) % evaluate_after_batches == 0:
                 f1, em = self.evaluate_answer(session, data_batches)
                 print("F1:", format(f1, '.2f'), " EM:", format(em, '.2f'))
+
+
