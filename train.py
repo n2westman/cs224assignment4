@@ -83,15 +83,15 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 
-def main(_):
+def load_and_preprocess_dataset(train_or_val, max_context_length):
 
-    # Do what you need to load datasets from FLAGS.data_dir
-    
-    # -------------------- Start of my code (jorisvanmens)
     # Creates a dataset. One datum looks as follows: datum1 = [context_word_ids, question_word_ids, answer_span]
-    # Then the whole dataset is a NumPy array of this structure: [(datum1), (datum2), ..]
+    # Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
 
-    train_or_val = "train" # Takes either 'train' or 'val'
+    # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
+    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
+    # (not sure if that is beneficial, given loading and preprocessing is alrady fast)
+
     print("Loading dataset: " + train_or_val)
     context_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.context"
     question_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.question"
@@ -106,34 +106,34 @@ def main(_):
         'answer_ends': []
     }
 
-#    max_context_length = 0
-#    max_question_length = 0
-
-    # Create basic dataset
-    # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
-    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
-
-    LIMIT_SAMPLES = True
-    ADD_PADDING = True
-    FIXED_CONTEXT_SIZE = True
-
-    num_samples = 1
-    context_size = 500
-
-    max_context_length = 0
-    max_question_length = 0
+    # Parameters
+    LIMIT_SAMPLES = False # Don't load full dataset, but only num_samples (for testing)
+    ADD_PADDING = True # Add padding to make all questions and contexts the same length
+    FIXED_CONTEXT_SIZE = True # Remove contexts longer than context_size (I don't think this can be turned off anymore)
+    num_samples = 3 # Only relevant for LIMIT_SAMPLES
+    context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
+    min_input_length = 3 # Remove questions & contexts smaller than this
 
     with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
+        max_context_length = 0
+        max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
             context = context.split()
             question = question.split()
             answer = answer.split()
-            dataset['questions'].append(question)
-            dataset['question_lengths'].append(len(question))
+
+            # Don't use Qs / contexts that are too short
+            if len(context) < min_input_length or len(question) < min_input_length:
+                continue
+
             answer_starts = [0] * len(context)
             answer_starts[int(answer[0])] = 1
             answer_ends = [0] * len(context)
             answer_ends[int(answer[1])] = 1
+
+            # Don't use malformed answers
+            if int(answer[0]) > int(answer[1]):
+                continue
 
             # Trim context variables
             if FIXED_CONTEXT_SIZE:
@@ -142,6 +142,8 @@ def main(_):
                 del answer_starts[max_context_length:]
                 del answer_ends[max_context_length:]
 
+            dataset['questions'].append(question)
+            dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
             dataset['answer_starts'].append(answer_starts)
@@ -155,7 +157,7 @@ def main(_):
                     if len(context) > max_context_length:
                         max_context_length = len(context)
     
-            # Limit samples
+            # Limit samples (only use num_samples instead of the full dataset -- for testing only)
             if LIMIT_SAMPLES:
                 num_samples = num_samples - 1
                 if num_samples == 0:
@@ -172,12 +174,41 @@ def main(_):
         for answer_end in dataset['answer_ends']:
             answer_end.extend([0] * (max_context_length - len(answer_end)))
 
-    
-    # dataset = np.array(dataset)
-    #print "LEN"
-    #print(len(dataset['contexts'][0]))
-    # print("Dataset loaded, size: " + str(dataset.shape))
-    # --------------------End of my code (jorisvanmens)
+    print("Dataset loaded with", str(len(dataset['contexts'])), "samples")
+
+    return dataset
+
+
+def split_in_batches(dataset, batch_size):
+    batches = []
+    for start_index in range(0, len(dataset['questions']), batch_size):
+        batch = {
+            'questions': [],
+            'question_lengths': [],
+            'contexts': [],
+            'context_lengths': [], 
+            'answer_starts': [],
+            'answer_ends': []
+        }
+        batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
+        batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
+        batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
+        batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
+        batch['answer_starts'] = dataset['answer_starts'][start_index:start_index + batch_size]
+        batch['answer_ends'] = dataset['answer_ends'][start_index:start_index + batch_size]
+        batches.append(batch)
+
+    print("Created", str(len(batches)), "batches")
+    return batches
+
+
+def main(_):
+
+    train_or_val = "train"
+    batch_size = 100
+    max_context_length = 600
+    dataset = load_and_preprocess_dataset(train_or_val, max_context_length)
+    data_batches = split_in_batches(dataset, batch_size)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
@@ -208,7 +239,9 @@ def main(_):
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
         # Test encoders code.
-        qa.test_the_graph(sess, dataset)
+        qa.test_the_graph(sess, data_batches[0])
+        qa.test_the_graph(sess, data_batches[1])
+        qa.test_the_graph(sess, data_batches[2])
 
         #qa.train(sess, dataset, save_train_dir)
 
