@@ -38,7 +38,7 @@ class Encoder(object):
     def __init__(self, size, vocab_dim):
         self.size = size
         self.vocab_dim = vocab_dim
-        self.n_hidden_enc = 5
+        self.n_hidden_enc = 200
 
     def encode(self, question_embeddings, question_lengths, context_embeddings, context_lengths):
         """
@@ -118,7 +118,7 @@ class Mixer(object):
 class Decoder(object):
     def __init__(self, output_size):
         self.output_size = output_size
-        self.n_hidden_dec = 50
+        self.n_hidden_dec = 600
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
         """
@@ -664,8 +664,7 @@ class QASystem(object):
             feed_dict = self.prep_feed_dict_from_batch(batch)
             _, current_loss = session.run([self.train_op, self.loss], feed_dict)
             toc = time.time()
-            print("Batch", str(idx), "done with", current_loss, "loss (took", str(format(toc - tic, '.2f')), "seconds)")
+            print("Batch", str(idx), "done with", format(current_loss, '.5f'), "loss (took", format(toc - tic, '.2f'), "seconds)")
             if (idx + 1) % evaluate_after_batches == 0:
                 f1, em = self.evaluate_answer(session, data_batches)
-                print("F1:", f1, " EM:", em)
-
+                print("F1:", format(f1, '.2f'), " EM:", format(em, '.2f'))
