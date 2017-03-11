@@ -28,7 +28,7 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-batch_size = 1
+batch_size = 100
 hidden_size = 200
 maxout_size = 32
 max_timesteps = 600
@@ -397,6 +397,7 @@ class QASystem(object):
 
     def setup_hmn_loss(self):
         def _loss_shared(logits, labels):
+          labels = tf.Print( labels, [tf.shape(labels)] )
           labels = tf.reshape(labels, [batch_size])
           cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
               logits=logits, labels=labels, name='per_step_cross_entropy')
@@ -413,8 +414,7 @@ class QASystem(object):
                 loss_beta = [fn(beta, labels_beta) for beta in logits_beta]
                 return tf.reduce_sum([loss_alpha, loss_beta], name='loss')
 
-        alpha_true = self.answer_starts_placeholder
-        beta_true = self.answer_ends_placeholder
+        alpha_true, beta_true = tf.split(self.answers_numeric_list, 2, 0)
         self.loss = _loss_multitask(self.decoder._alpha, alpha_true,
                                     self.decoder._beta, beta_true)
 
