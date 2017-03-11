@@ -329,6 +329,7 @@ class QASystem(object):
                 self.setup_loss()
             else:
                 self.setup_hmn_loss()
+            self.setup_train_op()
 
         # ==== set up training/updating procedure ====
         pass
@@ -424,6 +425,13 @@ class QASystem(object):
             question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
             return question_embeddings_lookup, context_embeddings_lookup
+
+    def setup_train_op(self):
+        learning_rate = 0.5
+        #optimizer = get_optimizer("sgd")
+        optimizer = tf.train.GradientDescentOptimizer(0.5)
+        self.train_op = optimizer.minimize(self.loss)
+        return self.train_op
 
     def optimize(self, session, train_x, train_y):
         """
@@ -611,8 +619,6 @@ class QASystem(object):
                 self.answer_starts_placeholder: batch['answer_starts'],
                 self.answer_ends_placeholder: batch['answer_ends']
             }
-            current_loss = session.run([self.loss], feed_dict)
+            _, current_loss = session.run([self.train_op, self.loss], feed_dict)
             print("Batch", str(idx), "done with", current_loss, "loss")
-
-
 
