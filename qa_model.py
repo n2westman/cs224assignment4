@@ -13,6 +13,8 @@ from pdb import set_trace as t
 
 from evaluate import exact_match_score, f1_score
 
+from contrib_ops import highway_maxout, batch_linear
+
 logging.basicConfig(level=logging.INFO)
 
 
@@ -25,6 +27,11 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
+batch_size = 1
+hidden_size = 200
+maxout_size = 32
+max_timesteps = 600
+max_decode_steps = 4
 
 class Encoder(object):
     def __init__(self, size, vocab_dim):
@@ -47,23 +54,18 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
+        # Forward direction cell
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
+        # Backward direction cell
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
         with tf.variable_scope("QuestionEncoderBiLSTM"):
-            # Forward direction cell
-            question_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
-            # Backward direction cell
-            question_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
 
-            question_outputs, _, = tf.nn.bidirectional_dynamic_rnn(question_lstm_fw_cell, question_lstm_bw_cell, question_embeddings,
-                                                  sequence_length=question_lengths, dtype=tf.float64)
+            question_outputs, _, = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, question_embeddings,
+                                                  sequence_length=question_lengths, dtype=tf.float32)
 
         with tf.variable_scope("AnswerEncoderBiLSTM"):
-            # Forward direction cell
-            context_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
-            # Backward direction cell
-            context_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
-
-            context_outputs, _, = tf.nn.bidirectional_dynamic_rnn(context_lstm_fw_cell, context_lstm_bw_cell, context_embeddings,
-                                                  sequence_length=context_lengths, dtype=tf.float64)
+            context_outputs, _, = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, context_embeddings,
+                                                  sequence_length=context_lengths, dtype=tf.float32)
         return tf.concat(question_outputs, 2), tf.concat(context_outputs, 2)
 
 class Mixer(object):
@@ -100,13 +102,14 @@ class Mixer(object):
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
         # Backward direction cell
         lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
-        
+
         # Dimensionalities:
         # D_C_d: samples x context_words x 3*2*n_hidden_enc
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float64)
+
+        U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
         return tf.concat(U, 2), U_final_hidden
@@ -159,33 +162,141 @@ class Decoder(object):
 
         # We want to do this for start and end prediction
         with tf.variable_scope("StartPredictor"):
-            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
-            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float64))
+            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
             # UW and UWb1 dimensionality: samples x n_hidden_dec
             UW = tf.matmul(U_final, self.W)
             UWb1 = tf.add(UW, self.b1)
             h = tf.nn.relu(UWb1) # samples x n_hidden_dec
-            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
-            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float64))
+            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
             hV = tf.matmul(h, self.V)
             self.start_pred = tf.add(hV, self.b2) # samples x context_words
 
         with tf.variable_scope("EndPredictor"):
-            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
-            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float64))
+            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
             # UW and UWb1 dimensionality: samples x n_hidden_dec
             UW = tf.matmul(U_final, self.W)
             UWb1 = tf.add(UW, self.b1)
             h = tf.nn.relu(UWb1) # samples x n_hidden_dec
-            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float64)
-            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float64))
+            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
             hV = tf.matmul(h, self.V)
             self.end_pred = tf.add(hV, self.b2) # samples x context_words
         
         return self.start_pred, self.end_pred
 
+
+class HMNDecoder(object):
+    def __init__(self, output_size):
+        self.output_size = output_size
+        self.n_hidden_dec = 50
+
+    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
+        """
+        takes in a knowledge representation
+        and output a probability estimation over
+        all paragraph tokens on which token should be
+        the start of the answer span, and which should be
+        the end of the answer span.
+
+        :param knowledge_rep: it is a representation of the paragraph and question,
+                              decided by how you choose to implement the encoder
+        :return:
+        """
+        # coattention_encoding: samples x context_words x 2*n_hidden_mix (it's packed in like this: ((data)), for some reason)
+        # return value: samples x context_words x 2*n_hidden_dec
+        self._initial_guess = np.zeros((2, batch_size), dtype=np.int32)
+        self._u = coattention_encoding
+        print("_u", self._u.get_shape())
+
+        def select(u, pos, idx):
+              # u: (samples x context_words x 2 * n_hidden_mix)
+              # sample: (context_words x 2 * n_hidden_mix)
+              sample = tf.gather(u, idx)
+              print("sample", sample)
+              # u_t: (2 * n_hidden_mix)
+              pos_idx = tf.gather(tf.reshape(pos, [-1]), idx)
+              print("pos", pos)
+              print("pos_idx", pos_idx)
+              u_t = tf.gather( sample, pos_idx)
+              
+              print("u_t", u_t.get_shape())
+              #reshaped_u_t = tf.reshape( u_t, [-1])
+              return u_t
+
+        with tf.variable_scope('selector'):
+            # LSTM for decoding
+            lstm_dec = tf.contrib.rnn.BasicLSTMCell(hidden_size)
+            # init highway fn
+            highway_alpha = highway_maxout(hidden_size, maxout_size)
+            highway_beta = highway_maxout(hidden_size, maxout_size)
+
+            # _u dimension: (batch_size, context, 2*hidden_size)
+            # reshape self._u to (context, batch_size, 2*hidden_size)
+            U = tf.transpose(self._u[:,:max_timesteps,:], perm=[1, 0, 2])
+
+            # batch indices
+            loop_until = tf.to_int32(np.array(range(batch_size)))
+            # initial estimated positions 
+            # s and e have dimension [batch_size]
+            s, e = tf.split(self._initial_guess, 2, 0)
+
+            fn = lambda idx: select(self._u, s, idx)
+            u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+            print( "u_s", u_s)
+
+            fn = lambda idx: select(self._u, e, idx)
+            u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+            print( "u_e", u_e)
+
+        self._s, self._e = [], []
+        self._alpha, self._beta = [], []        
+        with tf.variable_scope("Decoder") as scope:
+            for step in range(max_decode_steps):
+                if step > 0: scope.reuse_variables()
+                # single step lstm
+                _input = tf.concat([u_s, u_e], 1)
+
+                print( "_input:", _input)
+                # Note: This is a single-step rnn. 
+                # static_rnn does not need a time step dimension in input.
+                _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
+                # Note: h is the output state of the last layer which 
+                # includes a tuple: (output, hidden state), which is concatenated along second axis.  
+                print("h", h)
+                #print("st", st)
+                h_state = tf.concat(h, 1)
+                print("h_state", h_state)
+
+                with tf.variable_scope('highway_alpha'):
+                  # compute start position first
+                  print("u_s", u_s)
+                  fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
+                  alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
+                  s = tf.reshape(tf.argmax(alpha, 0), [batch_size])
+                  # update start guess
+                  fn = lambda idx: select(self._u, s, idx)
+                  u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+
+                with tf.variable_scope('highway_beta'):
+                  # compute end position next
+                  fn = lambda u_t: highway_beta(u_t, h_state, u_s, u_e)
+                  beta = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
+                  e = tf.reshape(tf.argmax(beta, 0), [batch_size])
+                  # update end guess
+                  fn = lambda idx: select(self._u, e, idx)
+                  u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+
+                self._s.append(s)
+                self._e.append(e)
+                self._alpha.append(tf.reshape(alpha, [batch_size, -1]))
+                self._beta.append(tf.reshape(beta, [batch_size, -1]))
+        return self._alpha, self._beta
+
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length):
+    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length, model):
         """
         Initializes your System
 
@@ -214,8 +325,10 @@ class QASystem(object):
                 question_embeddings_lookup,
                 context_embeddings_lookup
             )
-            self.setup_loss()
-            #self.setup_loss()
+            if model == 'baseline':
+                self.setup_loss()
+            else:
+                self.setup_hmn_loss()
 
         # ==== set up training/updating procedure ====
         pass
@@ -244,8 +357,6 @@ class QASystem(object):
         self.coattention_encoding, self.coattention_encoding_final_states = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
         self.start_prediction, self.end_prediction = self.decoder.decode(self.coattention_encoding, self.coattention_encoding_final_states, self.context_lengths_placeholder)
 
-#
-#        raise NotImplementedError("Connect all parts of your system here!")
 
     def setup_loss(self):
         """
@@ -257,13 +368,37 @@ class QASystem(object):
         sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answer_ends_placeholder)
         self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
 
+    def setup_hmn_loss(self):
+        def _loss_shared(logits, labels):
+          labels = tf.reshape(labels, [batch_size])
+          cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+              logits=logits, labels=labels, name='per_step_cross_entropy')
+          cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+          tf.add_to_collection('per_step_losses', cross_entropy_mean)
+          return tf.add_n(tf.get_collection('per_step_losses'), name='per_step_loss')
+
+        def _loss_multitask(logits_alpha, labels_alpha,
+                          logits_beta, labels_beta):
+            """Cumulative loss for start and end positions."""
+            with vs.variable_scope("loss"):
+                fn = lambda logit, label: _loss_shared(logit, label)
+                loss_alpha = [fn(alpha, labels_alpha) for alpha in logits_alpha]
+                loss_beta = [fn(beta, labels_beta) for beta in logits_beta]
+                return tf.reduce_sum([loss_alpha, loss_beta], name='loss')
+
+        alpha_true = self.answer_starts_placeholder
+        beta_true = self.answer_ends_placeholder
+        self.loss = _loss_multitask(self.decoder._alpha, alpha_true,
+                                    self.decoder._beta, beta_true)
+
+
     def setup_embeddings(self):
         """
         Loads distributed word representations based on placeholder tokens
         :return:
         """
         with vs.variable_scope("embeddings"):
-            embeddings = tf.Variable(self.pretrained_embeddings)
+            embeddings = tf.Variable(self.pretrained_embeddings, dtype=tf.float32)
             question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
             return question_embeddings_lookup, context_embeddings_lookup
@@ -392,7 +527,7 @@ class QASystem(object):
         # bilstm_encoded_contexts: samples x words x 2*n_hidden_enc
 
         # print_debug_output = tf.Print(self.network, [self.network], summarize=500)
-        #t()
+
         out1 = session.run([self.loss], feed_dict)
         print("Final layer shape:", out1[0].shape)
         print("Loss: ", out1[0])

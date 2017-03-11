@@ -10,7 +10,7 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
-from qa_model import Encoder, QASystem, Decoder, Mixer
+from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -37,6 +37,7 @@ tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per pri
 tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
+tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -116,7 +117,7 @@ def main(_):
     ADD_PADDING = True
     FIXED_CONTEXT_SIZE = True
 
-    num_samples = 1000
+    num_samples = 1
     context_size = 500
 
     max_context_length = 0
@@ -183,10 +184,13 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-    decoder = Decoder(output_size=FLAGS.output_size)
+    if FLAGS.model == 'baseline':
+        decoder = Decoder(output_size=FLAGS.output_size)
+    else:
+        decoder = HMNDecoder(output_size=FLAGS.output_size)
     mixer = Mixer()
 
-    qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length)
+    qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length, FLAGS.model)
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
