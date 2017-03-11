@@ -20,13 +20,14 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
+# jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
 tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
-tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
+tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
@@ -43,6 +44,7 @@ FLAGS = tf.app.flags.FLAGS
 
 
 def initialize_model(session, model, train_dir):
+    # jorisvanmens: this was prefab code (mostly unaltered)
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
@@ -56,6 +58,7 @@ def initialize_model(session, model, train_dir):
 
 
 def initialize_vocab(vocab_path):
+    # jorisvanmens: this was prefab code (mostly unaltered)
     if tf.gfile.Exists(vocab_path):
         rev_vocab = []
         with tf.gfile.GFile(vocab_path, mode="rb") as f:
@@ -68,6 +71,7 @@ def initialize_vocab(vocab_path):
 
 
 def get_normalized_train_dir(train_dir):
+    # jorisvanmens: this was prefab code (mostly unaltered)
     """
     Adds symlink to {train_dir} from /tmp/cs224n-squad-train to canonicalize the
     file paths saved in the checkpoint. This allows the model to be reloaded even
@@ -85,18 +89,20 @@ def get_normalized_train_dir(train_dir):
 
 def load_and_preprocess_dataset(train_or_val, max_context_length):
 
-    # Creates a dataset. One datum looks as follows: datum1 = [context_word_ids, question_word_ids, answer_span]
+    # jorisvanmens: I built this from scratch
+    # Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
     # Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
 
-    # TODO: perhaps better do this during pre-processing and store pre-processed data in standard Tensorflow format:
+    # TODO: could store pre-processed data in standard Tensorflow format:
     # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
-    # (not sure if that is beneficial, given loading and preprocessing is alrady fast)
+    # (not sure if beneficial, given loading and preprocessing is fast)
 
     print("Loading dataset: " + train_or_val)
     context_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.context"
     question_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.question"
     answer_span_file = FLAGS.data_dir + "/" + train_or_val + ".span"
 
+    # Definition of the dataset -- note definition appears in multiple places
     dataset = {
         'questions': [],
         'question_lengths': [],
@@ -119,6 +125,8 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
         max_context_length = 0
         max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
+            
+            # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
             answer = answer.split()
@@ -131,7 +139,7 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
             if int(answer[0]) > int(answer[1]):
                 continue
 
-            # Create onehot answer start and end vectors
+            # Create onehot answer start and end vectors, e.g. [0 0 1 0 0 0 0]
             answer_start_onehot = [0] * len(context)
             answer_start_onehot[int(answer[0])] = 1
             answer_end_onehot = [0] * len(context)
@@ -144,6 +152,7 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
                 del answer_start_onehot[max_context_length:]
                 del answer_end_onehot[max_context_length:]
 
+            # Add datum to dataset
             dataset['questions'].append(question)
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
@@ -152,7 +161,7 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
             dataset['answer_ends_onehot'].append(answer_end_onehot)
             dataset['answers_numeric_list'].append(answer)
 
-            # Track dynamic lengths for adding padding later on
+            # Track max question & context lengths for adding padding later on
             if ADD_PADDING:
                 if len(question) > max_question_length:
                     max_question_length = len(question)
@@ -160,7 +169,7 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
                     if len(context) > max_context_length:
                         max_context_length = len(context)
     
-            # Limit samples (only use num_samples instead of the full dataset -- for testing only)
+            # Limit samples (only use num_samples instead of the full dataset -- used for testing only)
             if LIMIT_SAMPLES:
                 num_samples = num_samples - 1
                 if num_samples == 0:
@@ -184,9 +193,12 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
 
 def main(_):
 
+    # Mix of pre-fab code and our code
+    # First function that is called when running code. Loads data, defines a few things and calls train()
+
     train_or_val = "train"
     batch_size = 100
-    max_context_length = 600
+    max_context_length = FLAGS.output_size
     dataset = load_and_preprocess_dataset(train_or_val, max_context_length)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
@@ -207,7 +219,7 @@ def main(_):
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
     logging.getLogger().addHandler(file_handler)
 
-    print(vars(FLAGS))
+    #print(vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 
@@ -220,7 +232,7 @@ def main(_):
         # Test if the graph works with a few batches
         #qa.test_the_graph(sess, dataset)
 
-        # Train!
+        # Kick off actual training
         qa.train(sess, dataset, save_train_dir)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
