@@ -439,7 +439,7 @@ class QASystem(object):
         :return:
         """
         with vs.variable_scope("embeddings"):
-            embeddings = tf.Variable(self.pretrained_embeddings, dtype=tf.float32)
+            embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
             self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
 
