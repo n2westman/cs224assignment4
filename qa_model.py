@@ -334,11 +334,8 @@ class QASystem(object):
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
-            question_embeddings_lookup, context_embeddings_lookup = self.setup_embeddings()
-            self.setup_system(
-                question_embeddings_lookup,
-                context_embeddings_lookup
-            )
+            self.setup_embeddings()
+            self.setup_system()
             if model == 'baseline':
                 self.setup_loss()
             else:
@@ -371,7 +368,7 @@ class QASystem(object):
         return batches
 
 
-    def setup_system(self, question_embeddings_lookup, context_embeddings_lookup):
+    def setup_system(self):
         # jorisvanmens: sets up parts of the graph (code by Ilya & Joris)
         """
         After your modularized implementation of encoder and decoder
@@ -379,13 +376,11 @@ class QASystem(object):
         to assemble your reading comprehension system!
         :return:
         """
-        self.question_embeddings_lookup = question_embeddings_lookup
-        self.context_embeddings_lookup = context_embeddings_lookup
 
         bilstm_encoded_questions, bilstm_encoded_contexts = self.encoder.encode(
-            question_embeddings_lookup,
+            self.question_embeddings_lookup,
             self.questions_lengths_placeholder,
-            context_embeddings_lookup,
+            self.context_embeddings_lookup,
             self.context_lengths_placeholder
         )
 
@@ -441,9 +436,8 @@ class QASystem(object):
         """
         with vs.variable_scope("embeddings"):
             embeddings = tf.Variable(self.pretrained_embeddings, dtype=tf.float32)
-            question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
-            context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
-            return question_embeddings_lookup, context_embeddings_lookup
+            self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
+            self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
 
     def setup_train_op(self):
         # jorisvanmens: training operation for minimizing loss (code by Joris)
