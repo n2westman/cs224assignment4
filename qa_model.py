@@ -87,6 +87,31 @@ class Encoder(object):
                                                       dtype=tf.float32)
         return tf.concat(hidden_state, 2), final_state
 
+class FFNN(object):
+    def __init__(self, input_size, output_size, hidden_size=200):
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+
+    def forward_prop(self, inputs, dropout_placeholder):
+        """
+        General 1-layer FFNN.
+
+        TODO(nwestman): Turn dropout off at test time.
+
+        :return: predictions
+        """
+        initializer = tf.contrib.layers.xavier_initializer()
+
+        W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
+        b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+        W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
+        b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+
+        h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
+        h_drop = tf.nn.dropout(h, dropout_placeholder)
+        return tf.matmul(h_drop, W2) + b2 # samples x context_words
+
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
@@ -164,45 +189,13 @@ class Decoder(object):
         max_context_words = coattention_encoding.get_shape()[1]
         n_hidden_mix = coattention_encoding.get_shape()[2]
 
-        # What do we want to do here? Create a simple regression / single layer neural net
-        # We have U_final = samples x 2*n_hidden_mix input
-        # We want to do h = relu(U * W + b1)
-        # Here, W has to be 2*n_hidden_mix x n_hidden_dec
-        # b has to be n_hidden_dec
+        ffnn = FFNN(n_hidden_mix, self.n_hidden_dec, max_context_words)
 
-        U = coattention_encoding
-        U_final = coattention_encoding_final_states
-        W_shape = (n_hidden_mix, self.n_hidden_dec)
-        b1_shape = (1, self.n_hidden_dec)
-
-        # Then we want to get our outputs as a context_words vector
-        # We do pred = h * V + b2
-        # We create V with dimensions: n_hidden_dec x context_words
-        # Also b2 with dimensions context_words
-
-        V_shape = (self.n_hidden_dec, max_context_words)
-        b2_shape = (1, max_context_words)
-
-        initializer = tf.contrib.layers.xavier_initializer()
-
-        # We want to do this for start and end prediction
         with tf.variable_scope("StartPredictor"):
-            W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
-            b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
-            b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
-            h_drop = tf.nn.dropout(h, dropout_placeholder)
-            start_pred = tf.matmul(h_drop, V) + b2 # samples x context_words
+            start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
 
         with tf.variable_scope("EndPredictor"):
-            W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
-            b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
-            b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
-            h_drop = tf.nn.dropout(h, dropout_placeholder)
-            end_pred = tf.matmul(h, V) + b2 # samples x context_words
+            end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
 
         return start_pred, end_pred
 
