@@ -40,9 +40,10 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam"):
+    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.01):
         self.batch_size = batch_size
         self.optimizer = optimizer
+        self.learning_rate = learning_rate
 
 class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -51,7 +52,7 @@ class Encoder(object):
         self.vocab_dim = vocab_dim
         self.n_hidden_enc = 200
 
-    def encode(self, embeddings, sequence_length):
+    def encode(self, embeddings, sequence_length, initial_state=None):
         """
         In a generalized encode function, you pass in your inputs,
         masks, and an initial
@@ -66,11 +67,24 @@ class Encoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
+
+        if initial_state is not None:
+            initial_state_fw = initial_state[0]
+            initial_state_bw = initial_state[1]
+        else:
+            initial_state_fw = None
+            initial_state_bw = None
+
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
         lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
-        outputs, _, = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, embeddings,
-                                              sequence_length=sequence_length, dtype=tf.float32)
-        return tf.concat(outputs, 2)
+        hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
+                                                      lstm_bw_cell,
+                                                      embeddings,
+                                                      initial_state_fw=initial_state_fw,
+                                                      initial_state_bw=initial_state_bw,
+                                                      sequence_length=sequence_length,
+                                                      dtype=tf.float32)
+        return tf.concat(hidden_state, 2), final_state
 
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
@@ -370,10 +384,10 @@ class QASystem(object):
         """
 
         with tf.variable_scope("q"):
-            self.bilstm_encoded_questions = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
+            self.bilstm_encoded_questions, encoded_question_final_state = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
 
         with tf.variable_scope("c"):
-            self.bilstm_encoded_contexts = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder)
+            self.bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
         self.coattention_encoding, self.coattention_encoding_final_states \
             = self.mixer.mix(self.bilstm_encoded_questions, self.bilstm_encoded_contexts, self.context_lengths_placeholder)
@@ -430,11 +444,8 @@ class QASystem(object):
             self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
 
     def setup_train_op(self):
-        # jorisvanmens: training operation for minimizing loss (code by Joris)
-        learning_rate = 0.5
         optimizer = get_optimizer(self.config.optimizer)
-        #optimizer = tf.train.AdamOptimizer(0.5)
-        self.train_op = optimizer().minimize(self.loss)
+        self.train_op = optimizer(self.config.learning_rate).minimize(self.loss)
 
     def optimize(self, session, train_x, train_y):
         # jorisvanmens: prefab code, not used

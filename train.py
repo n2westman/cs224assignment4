@@ -21,7 +21,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
-tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.005, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use during training.")
@@ -201,7 +201,7 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size)
+    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate)
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     if FLAGS.model == 'baseline':
         decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size)
