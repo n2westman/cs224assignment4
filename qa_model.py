@@ -487,12 +487,9 @@ class QASystem(object):
         so that other methods like self.answer() will be able to work properly
         :return:
         """
-        input_feed = {}
+        input_feed = self.create_feed_dict(test_x)
 
-        # fill in this feed_dictionary like:
-        # input_feed['test_x'] = test_x
-
-        output_feed = []
+        output_feed = [self.start_prediction, self.end_prediction]
 
         outputs = session.run(output_feed, input_feed)
 
@@ -550,17 +547,18 @@ class QASystem(object):
         em = 0.
 
         test_batch = random.choice(data_batches)
+        answers_numeric_list = test_batch['answers_numeric_list']
         feed_dict = self.create_feed_dict(test_batch)
-        answer_start_predictions, answer_end_predictions, answers_numeric_list = \
-            session.run([self.start_prediction, self.end_prediction, self.answers_numeric_list], feed_dict)
+        answer_start_predictions, answer_end_predictions = \
+            self.answer(session, test_batch)
 
-        answer_start_predictions_numeric = np.argmax(answer_start_predictions, axis = 1)
-        answer_end_predictions_numeric = np.argmax(answer_end_predictions, axis = 1)
         f1s = []
         ems = []
 
         for idx, answer_numeric in enumerate(answers_numeric_list):
-            prediction = [answer_start_predictions_numeric[idx], answer_end_predictions_numeric[idx]]
+            answer_numeric = map(int, answer_numeric)
+            prediction = [answer_start_predictions[idx], answer_end_predictions[idx]]
+
             em = 0
             if prediction[0] == answer_numeric[0] and prediction[1] == answer_numeric[1]:
                 em = 1
