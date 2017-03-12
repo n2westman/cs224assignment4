@@ -232,7 +232,7 @@ def main(_):
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
         # Kick off actual training
-        qa.train(sess, dataset, save_train_dir, test=FLAGS.test)
+        qa.train(sess, dataset, save_train_dir, FLAGS.log_dir, test=FLAGS.test)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 

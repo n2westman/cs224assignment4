@@ -10,7 +10,6 @@ import numpy as np
 import tensorflow as tf
 
 from six.moves import xrange  # pylint: disable=redefined-builtin
-from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
 from evaluate import exact_match_score, f1_score
 from contrib_ops import highway_maxout, batch_linear
@@ -31,6 +30,18 @@ hidden_size = 200
 maxout_size = 32
 max_timesteps = 600
 max_decode_steps = 4
+
+def variable_summaries(var):
+  """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
+  with tf.name_scope('summaries'):
+    mean = tf.reduce_mean(var)
+    tf.summary.scalar('mean', mean)
+    with tf.name_scope('stddev'):
+      stddev = tf.sqrt(tf.reduce_mean(tf.square(var - mean)))
+    tf.summary.scalar('stddev', stddev)
+    tf.summary.scalar('max', tf.reduce_max(var))
+    tf.summary.scalar('min', tf.reduce_min(var))
+    tf.summary.histogram('histogram', var)
 
 # jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
 class Config:
@@ -86,6 +97,7 @@ class Encoder(object):
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
                                                       dtype=tf.float32)
+
         return tf.concat(hidden_state, 2), final_state
 
 class FFNN(object):
@@ -104,14 +116,30 @@ class FFNN(object):
         """
         initializer = tf.contrib.layers.xavier_initializer()
 
-        W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
-        b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
-        W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
-        b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+        with tf.name_scope('layer1'):
+            W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
+            b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+            variable_summaries(W1)
+            variable_summaries(b1)
 
-        h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
-        h_drop = tf.nn.dropout(h, dropout_placeholder)
-        return tf.matmul(h_drop, W2) + b2 # samples x context_words
+        with tf.name_scope('layer2'):
+            W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
+            b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+            variable_summaries(W2)
+            variable_summaries(b2)
+
+        with tf.name_scope('Wx_plus_b_layer1'):
+            preactivate = tf.matmul(inputs, W1) + b1
+            tf.summary.histogram('pre_activations', preactivate)
+
+            h = tf.nn.relu(h) # samples x n_hidden_dec
+            h_drop = tf.nn.dropout(h, dropout_placeholder)
+
+        with tf.name_scope('Wx_plus_b_layer2'):
+            output = tf.matmul(h_drop, W2) + b2 # samples x context_words
+            tf.summary.histogram('output', output)
+
+        return output
 
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
@@ -142,7 +170,9 @@ class Mixer(object):
         bilstm_encoded_questions_transpose = tf.transpose(bilstm_encoded_questions, perm = [0, 2, 1])
         Q_C_q_concat = tf.concat([bilstm_encoded_questions_transpose, attention_contexts_C_q], 1)
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
+
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
+        tf.summary.histogram('coattention_context_C_d', coattention_context_C_d)
 
         # Forward direction cell
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
@@ -158,7 +188,11 @@ class Mixer(object):
         U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
-        return tf.concat(U, 2), U_final_hidden
+        U_concat = tf.concat(U, 2)
+
+        tf.summary.histogram('U', U_concat)
+
+        return U_concat, U_final_hidden
 
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
@@ -305,11 +339,9 @@ class HMNDecoder(object):
 
             fn = lambda idx: select(self._u, s, idx)
             u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_s", u_s)
 
             fn = lambda idx: select(self._u, e, idx)
             u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_e", u_e)
 
         self._s, self._e = [], []
         self._alpha, self._beta = [], []
@@ -319,20 +351,16 @@ class HMNDecoder(object):
                 # single step lstm
                 _input = tf.concat([u_s, u_e], 1)
 
-                print( "_input:", _input)
                 # Note: This is a single-step rnn.
                 # static_rnn does not need a time step dimension in input.
                 _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
                 # Note: h is the output state of the last layer which
                 # includes a tuple: (output, hidden state), which is concatenated along second axis.
-                print("h", h)
-                #print("st", st)
                 h_state = tf.concat(h, 1)
-                print("h_state", h_state)
+
 
                 with tf.variable_scope('highway_alpha'):
                   # compute start position first
-                  print("u_s", u_s)
                   fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
                   alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
                   s = tf.reshape(tf.argmax(alpha, 0), [self.batch_size])
@@ -351,6 +379,7 @@ class HMNDecoder(object):
 
                 self._s.append(s)
                 self._e.append(e)
+
                 self._alpha.append(tf.reshape(alpha, [self.batch_size, -1]))
                 self._beta.append(tf.reshape(beta, [self.batch_size, -1]))
         return self._alpha, self._beta
@@ -425,10 +454,16 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
+        tf.summary.histogram("bilstm_encoded_questions", bilstm_encoded_questions)
+        tf.summary.histogram("bilstm_encoded_contexts", bilstm_encoded_contexts)
+
         coattention_encoding, coattention_encoding_final_states \
             = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
         self.start_prediction, self.end_prediction = \
             self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
+
+        tf.summary.tensor_summary("start_prediction", self.start_prediction)
+        tf.summary.tensor_summary("end_prediction", self.end_prediction)
 
 
     def setup_loss(self):
@@ -441,6 +476,7 @@ class QASystem(object):
         sm_ce_loss_answer_start = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answers_numeric_list[:, 0])
         sm_ce_loss_answer_end = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answers_numeric_list[:, 1])
         self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
+        tf.summary.scalar("loss", self.loss)
 
     def setup_hmn_loss(self):
         # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
@@ -463,9 +499,18 @@ class QASystem(object):
                 loss_beta = [fn(beta, labels_beta) for beta in logits_beta]
                 return tf.reduce_sum([loss_alpha, loss_beta], name='loss')
 
-        alpha_true, beta_true = tf.split(self.answers_numeric_list, 2, 0)
+        alpha_true, beta_true = tf.split(self.answers_numeric_list, 2, 1)
+
+        tf.summary.tensor_summary("alpha_true", alpha_true)
+        tf.summary.tensor_summary("beta_true", beta_true)
+
+        tf.summary.tensor_summary("alpha", self.decoder._alpha)
+        tf.summary.tensor_summary("beta", self.decoder._beta)
+
         self.loss = _loss_multitask(self.decoder._alpha, alpha_true,
                                     self.decoder._beta, beta_true)
+        tf.summary.scalar("loss", self.loss)
+
 
 
     def setup_embeddings(self):
@@ -474,7 +519,7 @@ class QASystem(object):
         Loads distributed word representations based on placeholder tokens
         :return:
         """
-        with vs.variable_scope("embeddings"):
+        with tf.variable_scope("embeddings"):
             embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
             self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
@@ -489,13 +534,14 @@ class QASystem(object):
         This method is equivalent to a step() function
         :return: loss - the training loss
         """
+        merged = tf.summary.merge_all()
+
         input_feed = self.create_feed_dict(train_x, train_y, 1.0 - self.config.dropout)
 
-        output_feed = [self.train_op, self.loss]
+        output_feed = [self.train_op, self.loss, merged]
 
-        _, loss = session.run(output_feed, input_feed)
-
-        return loss
+        _, loss, summary = session.run(output_feed, input_feed)
+        return loss, summary
 
     def test(self, session, valid_x, valid_y):
         """
@@ -580,7 +626,6 @@ class QASystem(object):
 
         f1s = []
         ems = []
-
         for idx, answer_numeric in enumerate(answers_numeric_list):
             answer_numeric = map(int, answer_numeric)
             prediction = [answer_start_predictions[idx], answer_end_predictions[idx]]
@@ -609,7 +654,6 @@ class QASystem(object):
 
         f1 = sum(f1s) / len(f1s) * 100
         em = sum(ems) / len(ems) * 100
-
         if log:
             logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
 
@@ -642,7 +686,7 @@ class QASystem(object):
 
         return feed_dict
 
-    def train(self, session, dataset, train_dir, test=False):
+    def train(self, session, dataset, train_dir, log_dir, test=False):
         # jorisvanmens: actual training function, this is where the time is spent (code by Joris)
         # needs a lot more work
         """
@@ -686,11 +730,16 @@ class QASystem(object):
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
+
+        train_writer = tf.summary.FileWriter(log_dir, session.graph)
         for epoch in xrange(num_epochs):
             shuffle(data_batches)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
-                loss = self.optimize(session, batch_x, batch_y)
+              
+                loss, train_summary = self.optimize(session, batch_x, batch_y)
+                train_writer.add_summary(train_summary, idx)     
+                
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
@@ -701,3 +750,4 @@ class QASystem(object):
                         break
             checkpoint_path = self.saver.save(session, train_dir)
             tf.train.update_checkpoint_state(train_dir, checkpoint_path)
+
