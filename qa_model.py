@@ -630,7 +630,8 @@ class QASystem(object):
         # even continue training
 
         epoch_size = 10 # Note one evaluation takes as much time
-        data_batches = self.split_in_batches(dataset)
+        data_batches = self.split_in_batches(dataset['train'])
+        test_data_batches = self.split_in_batches(dataset['val'])
 
         # Block of prefab code that check the number of params
         tic = time.time()
@@ -647,7 +648,7 @@ class QASystem(object):
             logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
             logging.info("Training loss: %s" % format(loss, '.5f'))
             if (idx + 1) % epoch_size == 0:
-                f1, em = self.evaluate_answer(session, data_batches)
+                f1, em = self.evaluate_answer(session, test_data_batches)
                 if test: #test the graph
                     logging.info("Graph successfully executes.")
                     exit(0)
