@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 tf.app.flags.DEFINE_float("learning_rate", 0.005, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
@@ -201,7 +201,7 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate)
+    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate, dropout=FLAGS.dropout)
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     if FLAGS.model == 'baseline':
         decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size)

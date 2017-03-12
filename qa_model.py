@@ -40,10 +40,11 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.01):
+    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.01, dropout=0.15):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
+        self.dropout = dropout
 
 class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -141,7 +142,7 @@ class Decoder(object):
         self.n_hidden_dec = 600
         self.batch_size = batch_size
 
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
+    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -191,7 +192,8 @@ class Decoder(object):
             V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
             b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
             h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
-            start_pred = tf.matmul(h, V) + b2 # samples x context_words
+            h_drop = tf.nn.dropout(h, dropout_placeholder)
+            start_pred = tf.matmul(h_drop, V) + b2 # samples x context_words
 
         with tf.variable_scope("EndPredictor"):
             W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
@@ -199,6 +201,7 @@ class Decoder(object):
             V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
             b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
             h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
+            h_drop = tf.nn.dropout(h, dropout_placeholder)
             end_pred = tf.matmul(h, V) + b2 # samples x context_words
 
         return start_pred, end_pred
@@ -213,7 +216,7 @@ class HMNDecoder(object):
         self.n_hidden_dec = 50
         self.batch_size = batch_size
 
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
+    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -337,6 +340,7 @@ class QASystem(object):
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, max_context_length))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
+        self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -392,7 +396,7 @@ class QASystem(object):
         self.coattention_encoding, self.coattention_encoding_final_states \
             = self.mixer.mix(self.bilstm_encoded_questions, self.bilstm_encoded_contexts, self.context_lengths_placeholder)
         self.start_prediction, self.end_prediction = \
-            self.decoder.decode(self.coattention_encoding, self.coattention_encoding_final_states, self.context_lengths_placeholder)
+            self.decoder.decode(self.coattention_encoding, self.coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
     def setup_loss(self):
@@ -553,7 +557,7 @@ class QASystem(object):
         em = 0.
 
         test_batch = random.choice(data_batches)
-        feed_dict = self.prep_feed_dict_from_batch(test_batch)
+        feed_dict = self.create_feed_dict(test_batch)
         answer_start_predictions, answer_end_predictions, answers_numeric_list = \
             session.run([self.start_prediction, self.end_prediction, self.answers_numeric_list], feed_dict)
 
@@ -594,13 +598,30 @@ class QASystem(object):
 
         return f1, em
 
-    def prep_feed_dict_from_batch(self, batch):
+    def create_feed_dict(self, batch, dropout=1.0):
+        """Creates the feed_dict for the dependency parser.
+
+        TODO(nwestman): have model work w/o answers_numeric_list
+
+        A feed_dict takes the form of:
+        feed_dict = {
+                <placeholder>: <tensor of values to be passed for placeholder>,
+                ....
+        }
+
+        Args:
+            batch: A batch of input / output data.
+            dropout: The dropout rate.
+        Returns:
+            feed_dict: The feed dictionary mapping from placeholders to values.
+        """
         feed_dict = {
             self.question_placeholder: batch['questions'],
             self.questions_lengths_placeholder: batch['question_lengths'],
             self.context_placeholder: batch['contexts'],
             self.context_lengths_placeholder: batch['context_lengths'],
-            self.answers_numeric_list: batch['answers_numeric_list']
+            self.answers_numeric_list: batch['answers_numeric_list'],
+            self.dropout_placeholder: dropout
         }
         return feed_dict
 
@@ -611,7 +632,7 @@ class QASystem(object):
         data_batches = self.split_in_batches(dataset)
         data_input = data_batches[0]
 
-        prep_feed_dict_from_batch(data_input)
+        create_feed_dict(data_input)
 
         # Dimensionalities:
         # question_placeholder: samples x words
@@ -676,7 +697,7 @@ class QASystem(object):
         # Actual training loop for 1 epoch
         for idx, batch in enumerate(data_batches):
             tic = time.time()
-            feed_dict = self.prep_feed_dict_from_batch(batch)
+            feed_dict = self.create_feed_dict(batch, 1.0 - self.config.dropout)
             _, current_loss = session.run([self.train_op, self.loss], feed_dict)
             toc = time.time()
             print("Batch", str(idx), "done with", format(current_loss, '.5f'), "loss (took", format(toc - tic, '.2f'), "seconds)")
