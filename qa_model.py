@@ -115,18 +115,30 @@ class FFNN(object):
         """
         initializer = tf.contrib.layers.xavier_initializer()
 
-        W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
-        b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
-        W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
-        b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
-        variable_summaries("W1", W1)
-        variable_summaries("W2", W2)
-        variable_summaries("b1", b1)
-        variable_summaries("b2", b2)
+        with tf.name_scope('layer1'):
+            W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
+            b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+            variable_summaries(W1)
+            variable_summaries(b1)
 
-        h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
-        h_drop = tf.nn.dropout(h, dropout_placeholder)
-        return tf.matmul(h_drop, W2) + b2 # samples x context_words
+        with tf.name_scope('layer2'):
+            W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
+            b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+            variable_summaries(W2)
+            variable_summaries(b2)
+
+        with tf.name_scope('Wx_plus_b_layer1'):
+            preactivate = tf.matmul(inputs, W1) + b1
+            tf.summary.histogram('pre_activations', preactivate)
+
+            h = tf.nn.relu(h) # samples x n_hidden_dec
+            h_drop = tf.nn.dropout(h, dropout_placeholder)
+
+        with tf.name_scope('Wx_plus_b_layer2'):
+            output = tf.matmul(h_drop, W2) + b2 # samples x context_words
+            tf.summary.histogram('output', output)
+
+        return output
 
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
@@ -159,7 +171,7 @@ class Mixer(object):
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
 
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
-        variable_summaries("coattention_context", coattention_context_C_d)
+        tf.summary.histogram('coattention_context_C_d', coattention_context_C_d)
 
         # Forward direction cell
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
@@ -177,7 +189,7 @@ class Mixer(object):
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
         U_concat = tf.concat(U, 2)
 
-        tf.summary.tensor_summary("U", U_concat)
+        tf.summary.histogram('U', U_concat)
 
         return U_concat, U_final_hidden
 
@@ -441,8 +453,8 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        variable_summaries("bilstm_encoded_questions", bilstm_encoded_questions)
-        variable_summaries("bilstm_encoded_contexts", bilstm_encoded_contexts)
+        tf.summary.histogram("bilstm_encoded_questions", bilstm_encoded_questions)
+        tf.summary.histogram("bilstm_encoded_contexts", bilstm_encoded_contexts)
 
         coattention_encoding, coattention_encoding_final_states \
             = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
