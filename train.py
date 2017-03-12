@@ -4,7 +4,7 @@ from __future__ import print_function
 
 import os
 import json
-
+import sys
 import fileinput
 
 import tensorflow as tf
@@ -29,6 +29,7 @@ tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
+tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("dataset", "train", "Which dataset to use. Either 'train' or 'val'.")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
@@ -88,15 +89,24 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 
-def load_and_preprocess_dataset(path, dataset, max_context_length):
+def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
+    """
+    Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
+    Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
 
-    # jorisvanmens: I built this from scratch
-    # Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
-    # Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
+    TODO: could store pre-processed data in standard Tensorflow format:
+    https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
+    (not sure if beneficial, given loading and preprocessing is fast)
 
-    # TODO: could store pre-processed data in standard Tensorflow format:
-    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
-    # (not sure if beneficial, given loading and preprocessing is fast)
+    :return: A dictionary of parallel lists.
+    dataset = {
+        'questions': [],
+        'question_lengths': [],
+        'contexts': [],
+        'context_lengths': [],
+        'answers_numeric_list': [],
+    }
+    """
 
     print("Loading dataset: " + dataset)
     context_ids_file = os.path.join(path, dataset + ".ids.context")
@@ -117,17 +127,19 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
     }
 
     # Parameters
-    LIMIT_SAMPLES = False # Don't load full dataset, but only num_samples (for testing)
     ADD_PADDING = True # Add padding to make all questions and contexts the same length
     FIXED_CONTEXT_SIZE = True # Remove contexts longer than context_size (I don't think this can be turned off anymore)
-    num_samples = 1000 # Only relevant for LIMIT_SAMPLES
     context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
     min_input_length = 3 # Remove questions & contexts smaller than this
+    num_examples = 0
 
-    with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans:
+    with open(context_ids_file) as context_ids, \
+         open(question_ids_file) as question_ids, \
+         open(answer_span_file) as answer_spans:
         max_context_length = 0
         max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
+            num_examples += 1
 
             # Load raw context, question, answer from file
             context = context.split()
@@ -162,11 +174,8 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
                     if len(context) > max_context_length:
                         max_context_length = len(context)
 
-            # Limit samples (only use num_samples instead of the full dataset -- used for testing only)
-            if LIMIT_SAMPLES:
-                num_samples = num_samples - 1
-                if num_samples == 0:
-                    break
+            if num_examples >= max_examples:
+                break;
 
     # Add padding
     if ADD_PADDING:
@@ -175,7 +184,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
 
-    print("Dataset loaded with", str(len(dataset['contexts'])), "samples")
+    print("Dataset loaded with %s samples" % num_examples)
 
     return dataset
 
@@ -186,7 +195,7 @@ def main(_):
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
     max_context_length = FLAGS.output_size
-    dataset = load_and_preprocess_dataset(FLAGS.data_dir, FLAGS.dataset, max_context_length)
+    dataset = load_and_preprocess_dataset(FLAGS.data_dir, FLAGS.dataset, max_context_length, max_examples=FLAGS.max_examples)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
