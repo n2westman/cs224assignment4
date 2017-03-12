@@ -186,22 +186,22 @@ class Decoder(object):
 
         # We want to do this for start and end prediction
         with tf.variable_scope("StartPredictor"):
-            self.W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
-            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            self.V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
-            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            h = tf.nn.relu(tf.matmul(U_final, self.W) + self.b1) # samples x n_hidden_dec
-            self.start_pred = tf.matmul(h, self.V) + self.b2 # samples x context_words
+            W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
+            b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
+            V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
+            b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
+            h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
+            start_pred = tf.matmul(h, V) + b2 # samples x context_words
 
         with tf.variable_scope("EndPredictor"):
-            self.W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
-            self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            self.V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
-            self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            h = tf.nn.relu(tf.matmul(U_final, self.W) + self.b1) # samples x n_hidden_dec
-            self.end_pred = tf.matmul(h, self.V) + self.b2 # samples x context_words
+            W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
+            b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
+            V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
+            b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
+            h = tf.nn.relu(tf.matmul(U_final, W) + b1) # samples x n_hidden_dec
+            end_pred = tf.matmul(h, V) + b2 # samples x context_words
 
-        return self.start_pred, self.end_pred
+        return start_pred, end_pred
 
 
 class HMNDecoder(object):
