@@ -318,8 +318,6 @@ class QASystem(object):
         self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, max_context_length))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.answer_starts_placeholder = tf.placeholder(tf.int32, shape=(None, None))
-        self.answer_ends_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
 
         # ==== assemble pieces ====
@@ -348,16 +346,12 @@ class QASystem(object):
                 'question_lengths': [],
                 'contexts': [],
                 'context_lengths': [],
-                'answer_starts_onehot': [],
-                'answer_ends_onehot': [],
                 'answers_numeric_list': []
             }
             batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
             batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
             batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
             batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
-            batch['answer_starts_onehot'] = dataset['answer_starts_onehot'][start_index:start_index + batch_size]
-            batch['answer_ends_onehot'] = dataset['answer_ends_onehot'][start_index:start_index + batch_size]
             batch['answers_numeric_list'] = dataset['answers_numeric_list'][start_index:start_index + batch_size]
             batches.append(batch)
 
@@ -397,8 +391,8 @@ class QASystem(object):
         Set up your loss computation here
         :return:
         """
-        sm_ce_loss_answer_start = tf.nn.softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answer_starts_placeholder)
-        sm_ce_loss_answer_end = tf.nn.softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answer_ends_placeholder)
+        sm_ce_loss_answer_start = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answers_numeric_list[:, 0])
+        sm_ce_loss_answer_end = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answers_numeric_list[:, 1])
         self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
 
     def setup_hmn_loss(self):
@@ -600,8 +594,6 @@ class QASystem(object):
             self.questions_lengths_placeholder: batch['question_lengths'],
             self.context_placeholder: batch['contexts'],
             self.context_lengths_placeholder: batch['context_lengths'],
-            self.answer_starts_placeholder: batch['answer_starts_onehot'],
-            self.answer_ends_placeholder: batch['answer_ends_onehot'],
             self.answers_numeric_list: batch['answers_numeric_list']
         }
         return feed_dict

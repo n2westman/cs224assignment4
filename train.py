@@ -113,8 +113,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
         'question_lengths': [],
         'contexts': [],
         'context_lengths': [],
-        'answer_starts_onehot': [],
-        'answer_ends_onehot': [],
         'answers_numeric_list': [],
     }
 
@@ -144,26 +142,16 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
             if int(answer[0]) > int(answer[1]):
                 continue
 
-            # Create onehot answer start and end vectors, e.g. [0 0 1 0 0 0 0]
-            answer_start_onehot = [0] * len(context)
-            answer_start_onehot[int(answer[0])] = 1
-            answer_end_onehot = [0] * len(context)
-            answer_end_onehot[int(answer[1])] = 1
-
             # Trim context variables
             if FIXED_CONTEXT_SIZE:
                 max_context_length = context_size
                 del context[max_context_length:]
-                del answer_start_onehot[max_context_length:]
-                del answer_end_onehot[max_context_length:]
 
             # Add datum to dataset
             dataset['questions'].append(question)
             dataset['question_lengths'].append(len(question))
             dataset['contexts'].append(context)
             dataset['context_lengths'].append(len(context))
-            dataset['answer_starts_onehot'].append(answer_start_onehot)
-            dataset['answer_ends_onehot'].append(answer_end_onehot)
             dataset['answers_numeric_list'].append(answer)
 
             # Track max question & context lengths for adding padding later on
@@ -186,10 +174,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length):
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
-        for answer_start in dataset['answer_starts_onehot']:
-            answer_start.extend([0] * (max_context_length - len(answer_start)))
-        for answer_end in dataset['answer_ends_onehot']:
-            answer_end.extend([0] * (max_context_length - len(answer_end)))
 
     print("Dataset loaded with", str(len(dataset['contexts'])), "samples")
 
