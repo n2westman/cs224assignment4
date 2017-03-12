@@ -381,15 +381,15 @@ class QASystem(object):
         """
 
         with tf.variable_scope("q"):
-            self.bilstm_encoded_questions, encoded_question_final_state = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
+            bilstm_encoded_questions, encoded_question_final_state = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
 
         with tf.variable_scope("c"):
-            self.bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
+            bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        self.coattention_encoding, self.coattention_encoding_final_states \
-            = self.mixer.mix(self.bilstm_encoded_questions, self.bilstm_encoded_contexts, self.context_lengths_placeholder)
+        coattention_encoding, coattention_encoding_final_states \
+            = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
         self.start_prediction, self.end_prediction = \
-            self.decoder.decode(self.coattention_encoding, self.coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
+            self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
     def setup_loss(self):
@@ -640,11 +640,11 @@ class QASystem(object):
         out1 = session.run([self.loss], feed_dict)
         print("Final layer shape:", out1[0].shape)
         print("Loss: ", out1[0])
-        #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)
+        #out1, out2 = session.run([bilstm_encoded_questions, bilstm_encoded_contexts], feed_dict)
 
         #print("dataset['questions']:", dataset['questions'])
         #print("question_placeholder", self.question_placeholder.get_shape())
-        #print("bilmst_enc_qs", self.bilstm_encoded_questions.get_shape())
+        #print("bilmst_enc_qs", bilstm_encoded_questions.get_shape())
 
     def train(self, session, dataset, train_dir):
         # jorisvanmens: actual training function, this is where the time is spent (code by Joris)
