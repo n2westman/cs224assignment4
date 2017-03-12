@@ -32,7 +32,6 @@ tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model."
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
-tf.app.flags.DEFINE_string("dataset", "train", "Which dataset to use. Either 'train' or 'val'.")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
@@ -109,7 +108,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     }
     """
 
-    print("Loading dataset: " + dataset)
+    logging.info("Loading dataset: %s " % dataset)
     context_ids_file = os.path.join(path, dataset + ".ids.context")
     question_ids_file = os.path.join(path, dataset + ".ids.question")
     answer_span_file = os.path.join(path, dataset + ".span")
@@ -189,7 +188,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
         for context in dataset['contexts']:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
 
-    print("Dataset loaded with %s samples" % num_examples)
+    logging.info("Dataset loaded with %s samples" % num_examples)
 
     return dataset
 
@@ -200,7 +199,10 @@ def main(_):
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
     max_context_length = FLAGS.output_size
-    dataset = load_and_preprocess_dataset(FLAGS.data_dir, FLAGS.dataset, max_context_length, max_examples=FLAGS.max_examples)
+    dataset = {
+        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', max_context_length, max_examples=FLAGS.max_examples),
+        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', max_context_length, max_examples=FLAGS.max_examples)
+    }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")

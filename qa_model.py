@@ -353,19 +353,14 @@ class QASystem(object):
 
         batches = []
         for start_index in range(0, len(dataset['questions']), self.config.batch_size):
-            batch = {
-                'questions': [],
-                'question_lengths': [],
-                'contexts': [],
-                'context_lengths': [],
-                'answers_numeric_list': []
+            batch_x = {
+                'questions': dataset['questions'][start_index:start_index + self.config.batch_size],
+                'question_lengths': dataset['question_lengths'][start_index:start_index + self.config.batch_size],
+                'contexts': dataset['contexts'][start_index:start_index + self.config.batch_size],
+                'context_lengths': dataset['context_lengths'][start_index:start_index + self.config.batch_size]
             }
-            batch['questions'] = dataset['questions'][start_index:start_index + self.config.batch_size]
-            batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + self.config.batch_size]
-            batch['contexts'] = dataset['contexts'][start_index:start_index + self.config.batch_size]
-            batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + self.config.batch_size]
-            batch['answers_numeric_list'] = dataset['answers_numeric_list'][start_index:start_index + self.config.batch_size]
-            batches.append(batch)
+            batch_y = dataset['answers_numeric_list'][start_index:start_index + self.config.batch_size]
+            batches.append((batch_x, batch_y))
 
         print("Created", str(len(batches)), "batches")
         return batches
@@ -450,7 +445,7 @@ class QASystem(object):
         This method is equivalent to a step() function
         :return: loss - the training loss
         """
-        input_feed = self.create_feed_dict(train_x, 1.0 - self.config.dropout)
+        input_feed = self.create_feed_dict(train_x, train_y, 1.0 - self.config.dropout)
 
         output_feed = [self.train_op, self.loss]
 
@@ -459,22 +454,18 @@ class QASystem(object):
         return loss
 
     def test(self, session, valid_x, valid_y):
-        # jorisvanmens: prefab code, not used
         """
         in here you should compute a cost for your validation set
         and tune your hyperparameters according to the validation set performance
-        :return:
+        :return: loss - the validation loss
         """
-        input_feed = {}
+        input_feed = self.create_feed_dict(valid_x, valid_y)
 
-        # fill in this feed_dictionary like:
-        # input_feed['valid_x'] = valid_x
+        output_feed = [self.train_op, self.loss]
 
-        output_feed = []
+        _, loss = session.run(output_feed, input_feed)
 
-        outputs = session.run(output_feed, input_feed)
-
-        return outputs
+        return loss
 
     def decode(self, session, test_x):
         """
@@ -539,11 +530,9 @@ class QASystem(object):
         f1 = 0.
         em = 0.
 
-        test_batch = random.choice(data_batches)
-        answers_numeric_list = test_batch['answers_numeric_list']
-        feed_dict = self.create_feed_dict(test_batch)
-        answer_start_predictions, answer_end_predictions = \
-            self.answer(session, test_batch)
+        test_batch_x, test_batch_y = random.choice(data_batches)
+        answers_numeric_list = test_batch_y
+        answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
 
         f1s = []
         ems = []
@@ -582,10 +571,8 @@ class QASystem(object):
 
         return f1, em
 
-    def create_feed_dict(self, batch, dropout=1.0):
+    def create_feed_dict(self, batch_x, batch_y=None, dropout=1.0):
         """Creates the feed_dict for the dependency parser.
-
-        TODO(nwestman): have model work w/o answers_numeric_list
 
         A feed_dict takes the form of:
         feed_dict = {
@@ -600,13 +587,15 @@ class QASystem(object):
             feed_dict: The feed dictionary mapping from placeholders to values.
         """
         feed_dict = {
-            self.question_placeholder: batch['questions'],
-            self.questions_lengths_placeholder: batch['question_lengths'],
-            self.context_placeholder: batch['contexts'],
-            self.context_lengths_placeholder: batch['context_lengths'],
-            self.answers_numeric_list: batch['answers_numeric_list'],
+            self.question_placeholder: batch_x['questions'],
+            self.questions_lengths_placeholder: batch_x['question_lengths'],
+            self.context_placeholder: batch_x['contexts'],
+            self.context_lengths_placeholder: batch_x['context_lengths'],
             self.dropout_placeholder: dropout
         }
+        if batch_y is not None:
+            feed_dict[self.answers_numeric_list] = batch_y
+
         return feed_dict
 
     def train(self, session, dataset, train_dir, test=False):
@@ -640,8 +629,9 @@ class QASystem(object):
         # so that you can use your trained model to make predictions, or
         # even continue training
 
-        evaluate_after_batches = 10 # Note one evaluation takes as much time
-        data_batches = self.split_in_batches(dataset)
+        epoch_size = 10 # Note one evaluation takes as much time
+        data_batches = self.split_in_batches(dataset['train'])
+        test_data_batches = self.split_in_batches(dataset['val'])
 
         # Block of prefab code that check the number of params
         tic = time.time()
@@ -651,14 +641,14 @@ class QASystem(object):
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
         # Actual training loop for 1 epoch
-        for idx, batch in enumerate(data_batches):
+        for idx, (batch_x, batch_y) in enumerate(data_batches):
             tic = time.time()
-            loss = self.optimize(session, batch, batch['answers_numeric_list'])
+            loss = self.optimize(session, batch_x, batch_y)
             toc = time.time()
-            print("Batch", str(idx), "done with", format(loss, '.5f'), "loss (took", format(toc - tic, '.2f'), "seconds)")
-            if (idx + 1) % evaluate_after_batches == 0:
-                f1, em = self.evaluate_answer(session, data_batches)
-                print("F1:", format(f1, '.2f'), " EM:", format(em, '.2f'))
-            if test: #test the graph
-                print("Graph successfully executes.")
-                exit(0)
+            logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
+            logging.info("Training loss: %s" % format(loss, '.5f'))
+            if (idx + 1) % epoch_size == 0:
+                f1, em = self.evaluate_answer(session, test_data_batches)
+                if test: #test the graph
+                    logging.info("Graph successfully executes.")
+                    exit(0)
