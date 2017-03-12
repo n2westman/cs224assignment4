@@ -528,7 +528,7 @@ class QASystem(object):
         optimizer = get_optimizer(self.config.optimizer)
         self.train_op = optimizer(self.config.learning_rate).minimize(self.loss)
 
-    def optimize(self, session, train_x, train_y, idx):
+    def optimize(self, session, train_x, train_y):
         """
         Takes in actual data to optimize your model
         This method is equivalent to a step() function
