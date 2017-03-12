@@ -46,7 +46,6 @@ FLAGS = tf.app.flags.FLAGS
 
 
 def initialize_model(session, model, train_dir):
-    # jorisvanmens: this was prefab code (mostly unaltered)
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
@@ -60,7 +59,6 @@ def initialize_model(session, model, train_dir):
 
 
 def initialize_vocab(vocab_path):
-    # jorisvanmens: this was prefab code (mostly unaltered)
     if tf.gfile.Exists(vocab_path):
         rev_vocab = []
         with tf.gfile.GFile(vocab_path, mode="rb") as f:
