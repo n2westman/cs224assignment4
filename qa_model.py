@@ -7,17 +7,15 @@ import logging
 import random
 
 import numpy as np
-from six.moves import xrange  # pylint: disable=redefined-builtin
 import tensorflow as tf
+
+from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
-
 from evaluate import exact_match_score, f1_score
-
 from contrib_ops import highway_maxout, batch_linear
 
 logging.basicConfig(level=logging.INFO)
-
 
 def get_optimizer(opt):
     if opt == "adam":
