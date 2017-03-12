@@ -21,6 +21,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
+tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
 tf.app.flags.DEFINE_float("learning_rate", 0.005, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
@@ -230,11 +231,8 @@ def main(_):
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
-        # Test if the graph works with a few batches
-        #qa.test_the_graph(sess, dataset)
-
         # Kick off actual training
-        qa.train(sess, dataset, save_train_dir)
+        qa.train(sess, dataset, save_train_dir, test=FLAGS.test)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 
