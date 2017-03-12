@@ -84,7 +84,7 @@ class Mixer(object):
         # bilstm_encoded_questions: samples x question_words x 2*n_hidden_enc
         # bilstm_encoded_contexts: samples x context_words x 2*n_hidden_enc
 
-        # Dimensionalities: 
+        # Dimensionalities:
         # affinity_matrix_L: samples x question_words x context_words
         # normalized_attention_weights_A_q: samples x question_words x context_words
         # normalized_attention_weights_A_d: samples x context_words x question_words
@@ -162,35 +162,29 @@ class Decoder(object):
         # We do pred = h * V + b2
         # We create V with dimensions: n_hidden_dec x context_words
         # Also b2 with dimensions context_words
-        
+
         V_shape = (self.n_hidden_dec, max_context_words)
         b2_shape = (1, max_context_words)
 
+        initializer = tf.contrib.layers.xavier_initializer()
+
         # We want to do this for start and end prediction
         with tf.variable_scope("StartPredictor"):
-            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
             self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            # UW and UWb1 dimensionality: samples x n_hidden_dec
-            UW = tf.matmul(U_final, self.W)
-            UWb1 = tf.add(UW, self.b1)
-            h = tf.nn.relu(UWb1) # samples x n_hidden_dec
-            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
             self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            hV = tf.matmul(h, self.V)
-            self.start_pred = tf.add(hV, self.b2) # samples x context_words
+            h = tf.nn.relu(tf.matmul(U_final, self.W) + self.b1) # samples x n_hidden_dec
+            self.start_pred = tf.matmul(h, self.V) + self.b2 # samples x context_words
 
         with tf.variable_scope("EndPredictor"):
-            self.W = tf.get_variable('W', shape = W_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.W = tf.get_variable('W', shape=W_shape, initializer=initializer, dtype=tf.float32)
             self.b1 = tf.Variable(tf.zeros(b1_shape, tf.float32))
-            # UW and UWb1 dimensionality: samples x n_hidden_dec
-            UW = tf.matmul(U_final, self.W)
-            UWb1 = tf.add(UW, self.b1)
-            h = tf.nn.relu(UWb1) # samples x n_hidden_dec
-            self.V = tf.get_variable('V', shape = V_shape, initializer = tf.contrib.layers.xavier_initializer(), dtype = tf.float32)
+            self.V = tf.get_variable('V', shape=V_shape, initializer=initializer, dtype=tf.float32)
             self.b2 = tf.Variable(tf.zeros(b2_shape, tf.float32))
-            hV = tf.matmul(h, self.V)
-            self.end_pred = tf.add(hV, self.b2) # samples x context_words
-        
+            h = tf.nn.relu(tf.matmul(U_final, self.W) + self.b1) # samples x n_hidden_dec
+            self.end_pred = tf.matmul(h, self.V) + self.b2 # samples x context_words
+
         return self.start_pred, self.end_pred
 
 
@@ -230,7 +224,7 @@ class HMNDecoder(object):
               print("pos", pos)
               print("pos_idx", pos_idx)
               u_t = tf.gather( sample, pos_idx)
-              
+
               print("u_t", u_t.get_shape())
               #reshaped_u_t = tf.reshape( u_t, [-1])
               return u_t
@@ -248,7 +242,7 @@ class HMNDecoder(object):
 
             # batch indices
             loop_until = tf.to_int32(np.array(range(batch_size)))
-            # initial estimated positions 
+            # initial estimated positions
             # s and e have dimension [batch_size]
             s, e = tf.split(self._initial_guess, 2, 0)
 
@@ -261,7 +255,7 @@ class HMNDecoder(object):
             print( "u_e", u_e)
 
         self._s, self._e = [], []
-        self._alpha, self._beta = [], []        
+        self._alpha, self._beta = [], []
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
                 if step > 0: scope.reuse_variables()
@@ -269,11 +263,11 @@ class HMNDecoder(object):
                 _input = tf.concat([u_s, u_e], 1)
 
                 print( "_input:", _input)
-                # Note: This is a single-step rnn. 
+                # Note: This is a single-step rnn.
                 # static_rnn does not need a time step dimension in input.
                 _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
-                # Note: h is the output state of the last layer which 
-                # includes a tuple: (output, hidden state), which is concatenated along second axis.  
+                # Note: h is the output state of the last layer which
+                # includes a tuple: (output, hidden state), which is concatenated along second axis.
                 print("h", h)
                 #print("st", st)
                 h_state = tf.concat(h, 1)
@@ -353,7 +347,7 @@ class QASystem(object):
                 'questions': [],
                 'question_lengths': [],
                 'contexts': [],
-                'context_lengths': [], 
+                'context_lengths': [],
                 'answer_starts_onehot': [],
                 'answer_ends_onehot': [],
                 'answers_numeric_list': []
@@ -562,7 +556,7 @@ class QASystem(object):
         feed_dict = self.prep_feed_dict_from_batch(test_batch)
         answer_start_predictions, answer_end_predictions, answers_numeric_list = \
             session.run([self.start_prediction, self.end_prediction, self.answers_numeric_list], feed_dict)
-        
+
         answer_start_predictions_numeric = np.argmax(answer_start_predictions, axis = 1)
         answer_end_predictions_numeric = np.argmax(answer_end_predictions, axis = 1)
         f1s = []
@@ -579,7 +573,7 @@ class QASystem(object):
             num_same = len(set(prediction_range) & set(answer_range))
             if len(prediction_range) == 0:
                 precision = 0
-            else: 
+            else:
                 precision = 1.0 * num_same / len(prediction_range)
             if len(answer_range) == 0:
                 recall = 0
@@ -635,8 +629,8 @@ class QASystem(object):
         out1 = session.run([self.loss], feed_dict)
         print("Final layer shape:", out1[0].shape)
         print("Loss: ", out1[0])
-        #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)        
-        
+        #out1, out2 = session.run([self.bilstm_encoded_questions, self.bilstm_encoded_contexts], feed_dict)
+
         #print("dataset['questions']:", dataset['questions'])
         #print("question_placeholder", self.question_placeholder.get_shape())
         #print("bilmst_enc_qs", self.bilstm_encoded_questions.get_shape())
@@ -693,5 +687,3 @@ class QASystem(object):
             if (idx + 1) % evaluate_after_batches == 0:
                 f1, em = self.evaluate_answer(session, data_batches)
                 print("F1:", format(f1, '.2f'), " EM:", format(em, '.2f'))
-
-
