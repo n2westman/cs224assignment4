@@ -28,12 +28,23 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-# jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
-batch_size = 100
 hidden_size = 200
 maxout_size = 32
 max_timesteps = 600
 max_decode_steps = 4
+
+# jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
+class Config:
+    """Holds model hyperparams and data information.
+
+    The config class is used to store various hyperparameters and dataset
+    information parameters. Model objects are passed a Config() object at
+    instantiation.
+    """
+
+    def __init__(self, batch_size=100, optimizer="adam"):
+        self.batch_size = batch_size
+        self.optimizer = optimizer
 
 class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -121,9 +132,10 @@ class Mixer(object):
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
 
-    def __init__(self, output_size):
+    def __init__(self, output_size, batch_size):
         self.output_size = output_size
         self.n_hidden_dec = 600
+        self.batch_size = batch_size
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
         """
@@ -192,9 +204,10 @@ class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
 
-    def __init__(self, output_size):
+    def __init__(self, output_size, batch_size):
         self.output_size = output_size
         self.n_hidden_dec = 50
+        self.batch_size = batch_size
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
         """
@@ -210,7 +223,7 @@ class HMNDecoder(object):
         """
         # coattention_encoding: samples x context_words x 2*n_hidden_mix
         # return value: samples x context_words x 2*n_hidden_dec
-        self._initial_guess = np.zeros((2, batch_size), dtype=np.int32)
+        self._initial_guess = np.zeros((2, self.batch_size), dtype=np.int32)
         self._u = coattention_encoding
         print("_u", self._u.get_shape())
 
@@ -241,9 +254,9 @@ class HMNDecoder(object):
             U = tf.transpose(self._u[:,:max_timesteps,:], perm=[1, 0, 2])
 
             # batch indices
-            loop_until = tf.to_int32(np.array(range(batch_size)))
+            loop_until = tf.to_int32(np.array(range(self.batch_size)))
             # initial estimated positions
-            # s and e have dimension [batch_size]
+            # s and e have dimension [self.batch_size]
             s, e = tf.split(self._initial_guess, 2, 0)
 
             fn = lambda idx: select(self._u, s, idx)
@@ -278,7 +291,7 @@ class HMNDecoder(object):
                   print("u_s", u_s)
                   fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
                   alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  s = tf.reshape(tf.argmax(alpha, 0), [batch_size])
+                  s = tf.reshape(tf.argmax(alpha, 0), [self.batch_size])
                   # update start guess
                   fn = lambda idx: select(self._u, s, idx)
                   u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
@@ -287,19 +300,19 @@ class HMNDecoder(object):
                   # compute end position next
                   fn = lambda u_t: highway_beta(u_t, h_state, u_s, u_e)
                   beta = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  e = tf.reshape(tf.argmax(beta, 0), [batch_size])
+                  e = tf.reshape(tf.argmax(beta, 0), [self.batch_size])
                   # update end guess
                   fn = lambda idx: select(self._u, e, idx)
                   u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
 
                 self._s.append(s)
                 self._e.append(e)
-                self._alpha.append(tf.reshape(alpha, [batch_size, -1]))
-                self._beta.append(tf.reshape(beta, [batch_size, -1]))
+                self._alpha.append(tf.reshape(alpha, [self.batch_size, -1]))
+                self._beta.append(tf.reshape(beta, [self.batch_size, -1]))
         return self._alpha, self._beta
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length, model):
+    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length, config, model):
         """
         Initializes your System
 
@@ -310,6 +323,7 @@ class QASystem(object):
         self.encoder = encoder
         self.mixer = mixer
         self.decoder = decoder
+        self.config = config
         self.pretrained_embeddings = np.load(embed_path)["glove"]
 
         # ==== set up placeholder tokens ========
@@ -336,11 +350,11 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         pass
 
-    def split_in_batches(self, dataset, batch_size):
+    def split_in_batches(self, dataset):
         # jorisvanmens: splits a dataset into batches of batch_size (code by Joris)
 
         batches = []
-        for start_index in range(0, len(dataset['questions']), batch_size):
+        for start_index in range(0, len(dataset['questions']), self.config.batch_size):
             batch = {
                 'questions': [],
                 'question_lengths': [],
@@ -348,11 +362,11 @@ class QASystem(object):
                 'context_lengths': [],
                 'answers_numeric_list': []
             }
-            batch['questions'] = dataset['questions'][start_index:start_index + batch_size]
-            batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + batch_size]
-            batch['contexts'] = dataset['contexts'][start_index:start_index + batch_size]
-            batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + batch_size]
-            batch['answers_numeric_list'] = dataset['answers_numeric_list'][start_index:start_index + batch_size]
+            batch['questions'] = dataset['questions'][start_index:start_index + self.config.batch_size]
+            batch['question_lengths'] = dataset['question_lengths'][start_index:start_index + self.config.batch_size]
+            batch['contexts'] = dataset['contexts'][start_index:start_index + self.config.batch_size]
+            batch['context_lengths'] = dataset['context_lengths'][start_index:start_index + self.config.batch_size]
+            batch['answers_numeric_list'] = dataset['answers_numeric_list'][start_index:start_index + self.config.batch_size]
             batches.append(batch)
 
         print("Created", str(len(batches)), "batches")
@@ -400,7 +414,7 @@ class QASystem(object):
         # based on co-attention paper
         def _loss_shared(logits, labels):
           labels = tf.Print( labels, [tf.shape(labels)] )
-          labels = tf.reshape(labels, [batch_size])
+          labels = tf.reshape(labels, [self.config.batch_size])
           cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
               logits=logits, labels=labels, name='per_step_cross_entropy')
           cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
@@ -436,7 +450,7 @@ class QASystem(object):
     def setup_train_op(self):
         # jorisvanmens: training operation for minimizing loss (code by Joris)
         learning_rate = 0.5
-        optimizer = get_optimizer("adam")
+        optimizer = get_optimizer(self.config.optimizer)
         #optimizer = tf.train.AdamOptimizer(0.5)
         self.train_op = optimizer().minimize(self.loss)
         return self.train_op
@@ -602,8 +616,7 @@ class QASystem(object):
     def test_the_graph(self, session, dataset):
         # jorisvanmens: function we used for testing while we were setting up the graph, not used for actual training
 
-        batch_size = 100
-        data_batches = self.split_in_batches(dataset, batch_size)
+        data_batches = self.split_in_batches(dataset)
         data_input = data_batches[0]
 
         prep_feed_dict_from_batch(data_input)
@@ -658,9 +671,8 @@ class QASystem(object):
         # so that you can use your trained model to make predictions, or
         # even continue training
 
-        batch_size = 100
         evaluate_after_batches = 10 # Note one evaluation takes as much time
-        data_batches = self.split_in_batches(dataset, batch_size)
+        data_batches = self.split_in_batches(dataset)
 
         # Block of prefab code that check the number of params
         tic = time.time()
