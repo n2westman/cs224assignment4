@@ -445,22 +445,18 @@ class QASystem(object):
         self.train_op = optimizer(self.config.learning_rate).minimize(self.loss)
 
     def optimize(self, session, train_x, train_y):
-        # jorisvanmens: prefab code, not used
         """
         Takes in actual data to optimize your model
         This method is equivalent to a step() function
-        :return:
+        :return: loss - the training loss
         """
-        input_feed = {}
+        input_feed = self.create_feed_dict(train_x, 1.0 - self.config.dropout)
 
-        # fill in this feed_dictionary like:
-        # input_feed['train_x'] = train_x
+        output_feed = [self.train_op, self.loss]
 
-        output_feed = []
+        _, loss = session.run(output_feed, input_feed)
 
-        outputs = session.run(output_feed, input_feed)
-
-        return outputs
+        return loss
 
     def test(self, session, valid_x, valid_y):
         # jorisvanmens: prefab code, not used
@@ -481,26 +477,20 @@ class QASystem(object):
         return outputs
 
     def decode(self, session, test_x):
-        # jorisvanmens: prefab code, not used
         """
         Returns the probability distribution over different positions in the paragraph
         so that other methods like self.answer() will be able to work properly
         :return:
         """
-        input_feed = {}
+        input_feed = self.create_feed_dict(test_x)
 
-        # fill in this feed_dictionary like:
-        # input_feed['test_x'] = test_x
-
-        output_feed = []
+        output_feed = [self.start_prediction, self.end_prediction]
 
         outputs = session.run(output_feed, input_feed)
 
         return outputs
 
     def answer(self, session, test_x):
-        # jorisvanmens: prefab code, not used
-
         yp, yp2 = self.decode(session, test_x)
 
         a_s = np.argmax(yp, axis=1)
@@ -550,17 +540,18 @@ class QASystem(object):
         em = 0.
 
         test_batch = random.choice(data_batches)
+        answers_numeric_list = test_batch['answers_numeric_list']
         feed_dict = self.create_feed_dict(test_batch)
-        answer_start_predictions, answer_end_predictions, answers_numeric_list = \
-            session.run([self.start_prediction, self.end_prediction, self.answers_numeric_list], feed_dict)
+        answer_start_predictions, answer_end_predictions = \
+            self.answer(session, test_batch)
 
-        answer_start_predictions_numeric = np.argmax(answer_start_predictions, axis = 1)
-        answer_end_predictions_numeric = np.argmax(answer_end_predictions, axis = 1)
         f1s = []
         ems = []
 
         for idx, answer_numeric in enumerate(answers_numeric_list):
-            prediction = [answer_start_predictions_numeric[idx], answer_end_predictions_numeric[idx]]
+            answer_numeric = map(int, answer_numeric)
+            prediction = [answer_start_predictions[idx], answer_end_predictions[idx]]
+
             em = 0
             if prediction[0] == answer_numeric[0] and prediction[1] == answer_numeric[1]:
                 em = 1
@@ -618,35 +609,7 @@ class QASystem(object):
         }
         return feed_dict
 
-
-    def test_the_graph(self, session, dataset):
-        # jorisvanmens: function we used for testing while we were setting up the graph, not used for actual training
-
-        data_batches = self.split_in_batches(dataset)
-        data_input = data_batches[0]
-
-        create_feed_dict(data_input)
-
-        # Dimensionalities:
-        # question_placeholder: samples x words
-        # context_placeholder: samples x words
-        # question_embeddings_lookup: samples x words x embed_size
-        # context_embeddings_lookup: samples x words x embed_size
-        # bilstm_encoded_questions: samples x words x 2*n_hidden_enc
-        # bilstm_encoded_contexts: samples x words x 2*n_hidden_enc
-
-        # print_debug_output = tf.Print(self.network, [self.network], summarize=500)
-
-        out1 = session.run([self.loss], feed_dict)
-        print("Final layer shape:", out1[0].shape)
-        print("Loss: ", out1[0])
-        #out1, out2 = session.run([bilstm_encoded_questions, bilstm_encoded_contexts], feed_dict)
-
-        #print("dataset['questions']:", dataset['questions'])
-        #print("question_placeholder", self.question_placeholder.get_shape())
-        #print("bilmst_enc_qs", bilstm_encoded_questions.get_shape())
-
-    def train(self, session, dataset, train_dir):
+    def train(self, session, dataset, train_dir, test=False):
         # jorisvanmens: actual training function, this is where the time is spent (code by Joris)
         # needs a lot more work
         """
@@ -690,10 +653,12 @@ class QASystem(object):
         # Actual training loop for 1 epoch
         for idx, batch in enumerate(data_batches):
             tic = time.time()
-            feed_dict = self.create_feed_dict(batch, 1.0 - self.config.dropout)
-            _, current_loss = session.run([self.train_op, self.loss], feed_dict)
+            loss = self.optimize(session, batch, batch['answers_numeric_list'])
             toc = time.time()
-            print("Batch", str(idx), "done with", format(current_loss, '.5f'), "loss (took", format(toc - tic, '.2f'), "seconds)")
+            print("Batch", str(idx), "done with", format(loss, '.5f'), "loss (took", format(toc - tic, '.2f'), "seconds)")
             if (idx + 1) % evaluate_after_batches == 0:
                 f1, em = self.evaluate_answer(session, data_batches)
                 print("F1:", format(f1, '.2f'), " EM:", format(em, '.2f'))
+            if test: #test the graph
+                print("Graph successfully executes.")
+                exit(0)
