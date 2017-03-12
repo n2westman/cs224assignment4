@@ -14,6 +14,7 @@ from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
 from evaluate import exact_match_score, f1_score
 from contrib_ops import highway_maxout, batch_linear
+from random import shuffle
 
 logging.basicConfig(level=logging.INFO)
 
@@ -389,7 +390,7 @@ class QASystem(object):
             self.setup_train_op()
 
         # ==== set up training/updating procedure ====
-        pass
+        self.saver = tf.train.Saver()
 
     def split_in_batches(self, dataset):
         # jorisvanmens: splits a dataset into batches of batch_size (code by Joris)
@@ -672,7 +673,9 @@ class QASystem(object):
         # so that you can use your trained model to make predictions, or
         # even continue training
 
-        epoch_size = 10 # Note one evaluation takes as much time
+        num_epochs = 10
+        # TODO(nwestman): move to a flag
+        after_each_batch = 10 # Note one evaluation takes as much time
         data_batches = self.split_in_batches(dataset['train'])
         test_data_batches = self.split_in_batches(dataset['val'])
 
@@ -683,15 +686,18 @@ class QASystem(object):
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
-        # Actual training loop for 1 epoch
-        for idx, (batch_x, batch_y) in enumerate(data_batches):
-            tic = time.time()
-            loss = self.optimize(session, batch_x, batch_y)
-            toc = time.time()
-            logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
-            logging.info("Training loss: %s" % format(loss, '.5f'))
-            if (idx + 1) % epoch_size == 0:
-                f1, em = self.evaluate_answer(session, test_data_batches)
-                if test: #test the graph
-                    logging.info("Graph successfully executes.")
-                    exit(0)
+        for epoch in xrange(num_epochs):
+            shuffle(data_batches)
+            for idx, (batch_x, batch_y) in enumerate(data_batches):
+                tic = time.time()
+                loss = self.optimize(session, batch_x, batch_y)
+                toc = time.time()
+                logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
+                logging.info("Training loss: %s" % format(loss, '.5f'))
+                if (idx + 1) % after_each_batch == 0:
+                    f1, em = self.evaluate_answer(session, test_data_batches)
+                    if test: #test the graph
+                        logging.info("Graph successfully executes.")
+                        break
+            checkpoint_path = self.saver.save(session, train_dir)
+            tf.train.update_checkpoint_state(train_dir, checkpoint_path)
