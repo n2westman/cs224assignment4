@@ -40,7 +40,7 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.01, dropout=0.15):
+    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
@@ -189,13 +189,56 @@ class Decoder(object):
         max_context_words = coattention_encoding.get_shape()[1]
         n_hidden_mix = coattention_encoding.get_shape()[2]
 
-        ffnn = FFNN(n_hidden_mix, self.n_hidden_dec, max_context_words)
+        # What do we want to do here? Create a simple regression / single layer neural net
+        # We have U_final = samples x 2*n_hidden_mix input
+        # We want to do h = relu(U * W + b1)
+        # Here, W has to be 2*n_hidden_mix x n_hidden_dec
+        # b has to be n_hidden_dec
 
-        with tf.variable_scope("StartPredictor"):
-            start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
+        U = coattention_encoding
+        U_final = coattention_encoding_final_states
 
-        with tf.variable_scope("EndPredictor"):
-            end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
+        USE_NEW_DECODER = True
+
+        if USE_NEW_DECODER:
+            # This decoder uses the full coattention matrix as input
+            # Multiplies a single vector to every coattention matrix's column (corresponding to a single context word)
+            # and adds biases to create logits
+
+            Wnew_shape = (n_hidden_mix, 1)
+            bnew_shape = (max_context_words)
+            Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
+            initializer = tf.contrib.layers.xavier_initializer()
+
+            with tf.variable_scope("StartPredictor"):
+                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
+                bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                start_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
+                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+                start_pred = start_pred_tmp2 + bnew
+
+            with tf.variable_scope("EndPredictor"):
+                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
+                bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                end_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
+                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, max_timesteps])
+                end_pred = end_pred_tmp2 + bnew
+
+        else:
+            # This uses only the final hidden layer from the coattention matrix,
+            # and feeds it into a simple neural net
+
+            num_samples = coattention_encoding.get_shape()[0]
+            max_context_words = coattention_encoding.get_shape()[1]
+            n_hidden_mix = coattention_encoding.get_shape()[2]
+
+            ffnn = FFNN(n_hidden_mix, self.n_hidden_dec, max_context_words)
+
+            with tf.variable_scope("StartPredictor"):
+                start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
+
+            with tf.variable_scope("EndPredictor"):
+                end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
 
         return start_pred, end_pred
 
@@ -541,10 +584,10 @@ class QASystem(object):
             answer_numeric = map(int, answer_numeric)
             prediction = [answer_start_predictions[idx], answer_end_predictions[idx]]
 
-            em = 0
+            em = 0.
             if prediction[0] == answer_numeric[0] and prediction[1] == answer_numeric[1]:
-                em = 1
-            f1 = 0
+                em = 1.
+            f1 = 0.
             prediction_range = range(prediction[0], prediction[1] + 1)
             answer_range = range(answer_numeric[0], answer_numeric[1] + 1)
             num_same = len(set(prediction_range) & set(answer_range))
