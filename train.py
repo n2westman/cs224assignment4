@@ -154,6 +154,10 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             if int(answer[0]) > int(answer[1]):
                 continue
 
+            # Don't use answers that end after the context (doesn't catch anything in our dev dataset)
+            if int(answer[1]) > (len(context) - 1):
+                continue
+
             # Trim context variables
             if FIXED_CONTEXT_SIZE:
                 max_context_length = context_size
