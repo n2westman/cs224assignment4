@@ -30,6 +30,7 @@ tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
+tf.app.flags.DEFINE_string("dataset", "train", "Which dataset to use. Either 'train' or 'val'.")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
@@ -87,27 +88,31 @@ def get_normalized_train_dir(train_dir):
     return global_train_dir
 
 
-def load_and_preprocess_dataset(train_or_val, max_context_length):
+def load_and_preprocess_dataset(path, dataset, max_context_length):
 
     # jorisvanmens: I built this from scratch
     # Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
     # Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
 
     # TODO: could store pre-processed data in standard Tensorflow format:
-    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format 
+    # https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
     # (not sure if beneficial, given loading and preprocessing is fast)
 
-    print("Loading dataset: " + train_or_val)
-    context_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.context"
-    question_ids_file = FLAGS.data_dir + "/" + train_or_val + ".ids.question"
-    answer_span_file = FLAGS.data_dir + "/" + train_or_val + ".span"
+    print("Loading dataset: " + dataset)
+    context_ids_file = os.path.join(path, dataset + ".ids.context")
+    question_ids_file = os.path.join(path, dataset + ".ids.question")
+    answer_span_file = os.path.join(path, dataset + ".span")
+
+    assert os.path.exists(context_ids_file)
+    assert os.path.exists(question_ids_file)
+    assert os.path.exists(answer_span_file)
 
     # Definition of the dataset -- note definition appears in multiple places
     dataset = {
         'questions': [],
         'question_lengths': [],
         'contexts': [],
-        'context_lengths': [], 
+        'context_lengths': [],
         'answer_starts_onehot': [],
         'answer_ends_onehot': [],
         'answers_numeric_list': [],
@@ -121,11 +126,11 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
     context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
     min_input_length = 3 # Remove questions & contexts smaller than this
 
-    with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans: 
+    with open(context_ids_file) as context_ids, open(question_ids_file) as question_ids, open(answer_span_file) as answer_spans:
         max_context_length = 0
         max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
-            
+
             # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
@@ -168,13 +173,13 @@ def load_and_preprocess_dataset(train_or_val, max_context_length):
                 if not FIXED_CONTEXT_SIZE:
                     if len(context) > max_context_length:
                         max_context_length = len(context)
-    
+
             # Limit samples (only use num_samples instead of the full dataset -- used for testing only)
             if LIMIT_SAMPLES:
                 num_samples = num_samples - 1
                 if num_samples == 0:
                     break
-    
+
     # Add padding
     if ADD_PADDING:
         for question in dataset['questions']:
@@ -196,10 +201,9 @@ def main(_):
     # Mix of pre-fab code and our code
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
-    train_or_val = "train"
     batch_size = 100
     max_context_length = FLAGS.output_size
-    dataset = load_and_preprocess_dataset(train_or_val, max_context_length)
+    dataset = load_and_preprocess_dataset(FLAGS.data_dir, FLAGS.dataset, max_context_length)
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
