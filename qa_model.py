@@ -41,7 +41,7 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15):
+    def __init__(self, batch_size=200, optimizer="adam", learning_rate=0.001, dropout=0.15):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
@@ -205,7 +205,7 @@ class Decoder(object):
         U_final = coattention_encoding_final_states
 
         USE_DECODER_VERSION = 3
-        print("Using decoder version", USE_DECODER_VERSION)
+        logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
         if USE_DECODER_VERSION == 3:
             # This decoder also uses the full coattention matrix as input
@@ -213,14 +213,15 @@ class Decoder(object):
             # And throws it into a simple FFNN
             Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
             output_size = 1
-            ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
 
-            with tf.variable_scope("StartPredictor"):
-                start_pred_tmp = ffnn.forward_prop(Ureshape, dropout_placeholder)
+            with tf.variable_scope("StartPredictor"):                
+                start_ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
+                start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 start_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
 
             with tf.variable_scope("EndPredictor"):
-                end_pred_tmp = ffnn.forward_prop(Ureshape, dropout_placeholder)
+                end_ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
+                end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 end_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
 
 
@@ -265,7 +266,6 @@ class Decoder(object):
                 end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
 
         return start_pred, end_pred
-
 
 class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
@@ -430,7 +430,7 @@ class QASystem(object):
             batch_y = answers[start_index:start_index + self.config.batch_size]
             batches.append((batch_x, batch_y))
 
-        print("Created", str(len(batches)), "batches")
+        logging.info("Created %d batches" % len(batches))
         return batches
 
 
@@ -577,7 +577,7 @@ class QASystem(object):
 
         return valid_cost
 
-    def evaluate_answer(self, session, data_batches, sample=100, log=True):
+    def evaluate_answer(self, session, data_batches, sample=200, log=True):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
