@@ -214,7 +214,7 @@ class Decoder(object):
             Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
             output_size = 1
 
-            with tf.variable_scope("StartPredictor"):                
+            with tf.variable_scope("StartPredictor"):
                 start_ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
                 start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 start_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
@@ -705,7 +705,7 @@ class QASystem(object):
                 if (idx + 1) % after_each_batch == 0:
                     test_batch_x, test_batch_y = random.choice(data_batches)
                     test_valid_loss = self.test(session, test_batch_x, test_batch_y)
-                    logging.info("Sample alidation loss: %s" % format(test_valid_loss, '.5f'))
+                    logging.info("Sample validation loss: %s" % format(test_valid_loss, '.5f'))
                     f1, em = self.evaluate_answer(session, test_data_batches)
                     if test: #test the graph
                         logging.info("Graph successfully executes.")

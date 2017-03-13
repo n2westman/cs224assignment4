@@ -195,7 +195,12 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate, dropout=FLAGS.dropout)
+    configKwargs = {
+        'batch_size': FLAGS.batch_size,
+        'learning_rate': FLAGS.learning_rate,
+        'dropout': FLAGS.dropout,
+    }
+    config = Config(**configKwargs)
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
     if FLAGS.model == 'baseline':
         decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size)
