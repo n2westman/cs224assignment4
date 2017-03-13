@@ -112,7 +112,7 @@ class FFNN(object):
 
         h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
         h_drop = tf.nn.dropout(h, dropout_placeholder)
-        if self.output_size > 1: 
+        if self.output_size > 1:
             output = tf.matmul(h_drop, W2) + b2
         else:
             output = tf.matmul(h_drop, W2) # don't need bias if output_size == 1
@@ -215,7 +215,7 @@ class Decoder(object):
             output_size = 1
             ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
 
-            with tf.variable_scope("StartPredictor"):                
+            with tf.variable_scope("StartPredictor"):
                 start_pred_tmp = ffnn.forward_prop(Ureshape, dropout_placeholder)
                 start_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
 
@@ -578,13 +578,14 @@ class QASystem(object):
         return valid_cost
 
     def evaluate_answer(self, session, data_batches, sample=100, log=True):
-        # jorisvanmens: calculate F1 and EM on a random batch (code by Joris)
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
 
         This step actually takes quite some time. So we can only sample 100 examples
         from either training or testing set.
+
+        TODO(nwestman): Create function to map id's back to words.
 
         :param session: session should always be centrally managed in train.py
         :param dataset: a representation of our data, in some implementations, you can
@@ -601,37 +602,20 @@ class QASystem(object):
         answers_numeric_list = test_batch_y
         answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
 
-        f1s = []
-        ems = []
+        for idx, answer_indices in enumerate(answers_numeric_list):
+            context = test_batch_x['contexts'][idx]
 
-        for idx, answer_numeric in enumerate(answers_numeric_list):
-            answer_numeric = map(int, answer_numeric)
-            prediction = [answer_start_predictions[idx], answer_end_predictions[idx]]
+            answer_indices = map(int, answer_indices)
+            prediction_indices = [answer_start_predictions[idx], answer_end_predictions[idx]]
 
-            em = 0.
-            if prediction[0] == answer_numeric[0] and prediction[1] == answer_numeric[1]:
-                em = 1.
-            f1 = 0.
-            prediction_range = range(prediction[0], prediction[1] + 1)
-            answer_range = range(answer_numeric[0], answer_numeric[1] + 1)
-            num_same = len(set(prediction_range) & set(answer_range))
-            if len(prediction_range) == 0:
-                precision = 0
-            else:
-                precision = 1.0 * num_same / len(prediction_range)
-            if len(answer_range) == 0:
-                recall = 0
-            else:
-                recall = 1.0 * num_same / len(answer_range)
-            if precision + recall == 0:
-                f1 = 0
-            else:
-                f1 = (2 * precision * recall) / (precision + recall)
-            f1s.append(f1)
-            ems.append(em)
+            ground_truth_ids = ' '.join(context[answer_indices[0]: answer_indices[1] + 1])
+            prediction_ids = ' '.join(context[prediction_indices[0]: prediction_indices[1] + 1])
 
-        f1 = sum(f1s) / len(f1s) * 100
-        em = sum(ems) / len(ems) * 100
+            f1 += f1_score(prediction_ids, ground_truth_ids)
+            em += exact_match_score(prediction_ids, ground_truth_ids)
+
+        em = 100.0 * em / len(answers_numeric_list)
+        f1 = 100.0 * f1 / len(answers_numeric_list)
 
         if log:
             logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
