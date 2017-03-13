@@ -107,11 +107,16 @@ class FFNN(object):
         W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
         b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
         W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
-        b2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
+        if self.output_size > 1: # don't need bias if output_size == 1
+            b2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
 
         h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
         h_drop = tf.nn.dropout(h, dropout_placeholder)
-        return tf.matmul(h_drop, W2) + b2 # samples x context_words
+        if self.output_size > 1: 
+            output = tf.matmul(h_drop, W2) + b2
+        else:
+            output = tf.matmul(h_drop, W2) # don't need bias if output_size == 1
+        return output # samples x context_words
 
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
@@ -199,7 +204,7 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        USE_DECODER_VERSION = 2
+        USE_DECODER_VERSION = 3
         print("Using decoder version", USE_DECODER_VERSION)
 
         if USE_DECODER_VERSION == 3:
@@ -705,6 +710,7 @@ class QASystem(object):
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
         for epoch in xrange(num_epochs):
+            logging.info("Starting epoch %d", epoch)
             shuffle(data_batches)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
