@@ -124,7 +124,7 @@ class FFNN(object):
 
         with tf.name_scope('layer2'):
             W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
-            b2 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+            b2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
             variable_summaries(W2)
             variable_summaries(b2)
 
@@ -233,9 +233,27 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        USE_NEW_DECODER = True
+        USE_DECODER_VERSION = 2
+        print("Using decoder version", USE_DECODER_VERSION)
 
-        if USE_NEW_DECODER:
+        if USE_DECODER_VERSION == 3:
+            # This decoder also uses the full coattention matrix as input
+            # It then takes a matrix coattention column (corresponding to a single context word)
+            # And throws it into a simple FFNN
+            Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
+            output_size = 1
+            ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
+
+            with tf.variable_scope("StartPredictor"):                
+                start_pred_tmp = ffnn.forward_prop(Ureshape, dropout_placeholder)
+                start_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+
+            with tf.variable_scope("EndPredictor"):
+                end_pred_tmp = ffnn.forward_prop(Ureshape, dropout_placeholder)
+                end_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+
+
+        elif USE_DECODER_VERSION == 2:
             # This decoder uses the full coattention matrix as input
             # Multiplies a single vector to every coattention matrix's column (corresponding to a single context word)
             # and adds biases to create logits
@@ -247,17 +265,17 @@ class Decoder(object):
 
             with tf.variable_scope("StartPredictor"):
                 Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
-                bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 start_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
                 start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, max_timesteps])
-                start_pred = start_pred_tmp2 + bnew
+                start_pred = start_pred_tmp2# + bnew
 
             with tf.variable_scope("EndPredictor"):
                 Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
-                bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 end_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
                 end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, max_timesteps])
-                end_pred = end_pred_tmp2 + bnew
+                end_pred = end_pred_tmp2# + bnew
 
         else:
             # This uses only the final hidden layer from the coattention matrix,
@@ -750,4 +768,3 @@ class QASystem(object):
                         break
             checkpoint_path = self.saver.save(session, train_dir)
             tf.train.update_checkpoint_state(train_dir, checkpoint_path)
-
