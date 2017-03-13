@@ -14,7 +14,6 @@ from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
 from evaluate import exact_match_score, f1_score
 from contrib_ops import highway_maxout, batch_linear
-from random import shuffle
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,11 +40,17 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=200, optimizer="adam", learning_rate=0.001, dropout=0.15):
+    # TODO(nwestman): move to flags as needed
+    after_each_batch = 10
+    num_epochs = 10
+    shuffle = True
+
+    def __init__(self, batch_size=200, optimizer="adam", learning_rate=0.001, dropout=0.15, test=False):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
         self.dropout = dropout
+        self.test = test
 
 class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -415,20 +420,28 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         self.saver = tf.train.Saver()
 
-    def split_in_batches(self, dataset):
+    def split_in_batches(self, dataset, batch_size):
+        if self.config.shuffle:
+            random.shuffle(dataset)
+
         inputs, answers = zip(*dataset)
         questions, contexts = zip(*inputs)
 
         batches = []
-        for start_index in range(0, len(dataset), self.config.batch_size):
+        for start_index in range(0, len(dataset), batch_size):
             batch_x = {
-                'questions': questions[start_index:start_index + self.config.batch_size],
-                'question_lengths': map(len, questions[start_index:start_index + self.config.batch_size]),
-                'contexts': contexts[start_index:start_index + self.config.batch_size],
-                'context_lengths': map(len, contexts[start_index:start_index + self.config.batch_size]),
+                'questions': questions[start_index:start_index + batch_size],
+                'question_lengths': map(len, questions[start_index:start_index + batch_size]),
+                'contexts': contexts[start_index:start_index + batch_size],
+                'context_lengths': map(len, contexts[start_index:start_index + batch_size]),
             }
-            batch_y = answers[start_index:start_index + self.config.batch_size]
+            batch_y = answers[start_index:start_index + batch_size]
             batches.append((batch_x, batch_y))
+
+        logging.debug("Expected batch_size: %s" % batch_size)
+        logging.debug("Actual batch_size: %s" % len(batches[0][1]))
+        if len(dataset) > batch_size:
+            assert (batch_size == len(batches[0][1]))
 
         logging.info("Created %d batches" % len(batches))
         return batches
@@ -577,7 +590,7 @@ class QASystem(object):
 
         return valid_cost
 
-    def evaluate_answer(self, session, data_batches, sample=200, log=True):
+    def evaluate_answer(self, session, dataset, sample=100, log=True):
         """
         Evaluate the model's performance using the harmonic mean of F1 and Exact Match (EM)
         with the set of true answer labels
@@ -598,7 +611,10 @@ class QASystem(object):
         f1 = 0.
         em = 0.
 
+        data_batches = self.split_in_batches(dataset, sample)
+
         test_batch_x, test_batch_y = random.choice(data_batches)
+        valid_loss = self.test(session, test_batch_x, test_batch_y)
         answers_numeric_list = test_batch_y
         answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
 
@@ -620,7 +636,7 @@ class QASystem(object):
         if log:
             logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
 
-        return f1, em
+        return f1, em, valid_loss
 
     def create_feed_dict(self, batch_x, batch_y=None, dropout=1.0):
         """Creates the feed_dict for the dependency parser.
@@ -649,7 +665,7 @@ class QASystem(object):
 
         return feed_dict
 
-    def train(self, session, dataset, train_dir, test=False):
+    def train(self, session, dataset, train_dir):
         # jorisvanmens: actual training function, this is where the time is spent (code by Joris)
         # needs a lot more work
         """
@@ -674,41 +690,27 @@ class QASystem(object):
         :param train_dir: path to the directory where you should save the model checkpoint
         :return:
         """
-        # some free code to print out number of parameters in your model
-        # it's always good to check!
-        # you will also want to save your model parameters in train_dir
-        # so that you can use your trained model to make predictions, or
-        # even continue training
 
-        num_epochs = 10
-        # TODO(nwestman): move to a flag
-        after_each_batch = 10 # Note one evaluation takes as much time
-        data_batches = self.split_in_batches(dataset['train'])
-        test_data_batches = self.split_in_batches(dataset['val'])
-
-        # Block of prefab code that check the number of params
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
-        for epoch in xrange(num_epochs):
+        for epoch in xrange(self.config.num_epochs):
             logging.info("Starting epoch %d", epoch)
-            shuffle(data_batches)
+            data_batches = self.split_in_batches(dataset['train'], self.config.batch_size)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
-                if (idx + 1) % after_each_batch == 0:
-                    test_batch_x, test_batch_y = random.choice(data_batches)
-                    test_valid_loss = self.test(session, test_batch_x, test_batch_y)
-                    logging.info("Sample validation loss: %s" % format(test_valid_loss, '.5f'))
-                    f1, em = self.evaluate_answer(session, test_data_batches)
-                    if test: #test the graph
+                if (idx + 1) % self.config.after_each_batch == 0 or self.config.test:
+                    _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
+                    logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
+                    if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
-                        break
+                        exit(0)
             checkpoint_path = self.saver.save(session, train_dir)
             tf.train.update_checkpoint_state(train_dir, checkpoint_path)

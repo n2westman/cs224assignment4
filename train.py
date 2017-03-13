@@ -199,6 +199,7 @@ def main(_):
         'batch_size': FLAGS.batch_size,
         'learning_rate': FLAGS.learning_rate,
         'dropout': FLAGS.dropout,
+        'test': FLAGS.test,
     }
     config = Config(**configKwargs)
     encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
@@ -226,7 +227,7 @@ def main(_):
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
         # Kick off actual training
-        qa.train(sess, dataset, save_train_dir, test=FLAGS.test)
+        qa.train(sess, dataset, save_train_dir)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 
