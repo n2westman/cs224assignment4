@@ -96,14 +96,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
     (not sure if beneficial, given loading and preprocessing is fast)
 
-    :return: A dictionary of parallel lists.
-    dataset = {
-        'questions': [],
-        'question_lengths': [],
-        'contexts': [],
-        'context_lengths': [],
-        'answers_numeric_list': [],
-    }
+    :return: A list of (inputs, labels) tuples, where inputs are (q, c)
     """
 
     logging.info("Loading dataset: %s " % dataset)
@@ -116,13 +109,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     assert os.path.exists(answer_span_file)
 
     # Definition of the dataset -- note definition appears in multiple places
-    dataset = {
-        'questions': [],
-        'question_lengths': [],
-        'contexts': [],
-        'context_lengths': [],
-        'answers_numeric_list': [],
-    }
+    questions = []
+    contexts = []
+    answers = []
 
     # Parameters
     ADD_PADDING = True # Add padding to make all questions and contexts the same length
@@ -162,11 +151,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
                 del context[max_context_length:]
 
             # Add datum to dataset
-            dataset['questions'].append(question)
-            dataset['question_lengths'].append(len(question))
-            dataset['contexts'].append(context)
-            dataset['context_lengths'].append(len(context))
-            dataset['answers_numeric_list'].append(answer)
+            questions.append(question)
+            contexts.append(context)
+            answers.append(answer)
 
             # Track max question & context lengths for adding padding later on
             if ADD_PADDING:
@@ -181,12 +168,14 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     # Add padding
     if ADD_PADDING:
-        for question in dataset['questions']:
+        for question in questions:
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-        for context in dataset['contexts']:
+        for context in contexts:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
 
     logging.info("Dataset loaded with %s samples" % num_examples)
+
+    dataset = zip(zip(questions, contexts), answers)
 
     return dataset
 

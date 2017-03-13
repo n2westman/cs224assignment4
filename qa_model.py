@@ -416,17 +416,18 @@ class QASystem(object):
         self.saver = tf.train.Saver()
 
     def split_in_batches(self, dataset):
-        # jorisvanmens: splits a dataset into batches of batch_size (code by Joris)
+        inputs, answers = zip(*dataset)
+        questions, contexts = zip(*inputs)
 
         batches = []
-        for start_index in range(0, len(dataset['questions']), self.config.batch_size):
+        for start_index in range(0, len(dataset), self.config.batch_size):
             batch_x = {
-                'questions': dataset['questions'][start_index:start_index + self.config.batch_size],
-                'question_lengths': dataset['question_lengths'][start_index:start_index + self.config.batch_size],
-                'contexts': dataset['contexts'][start_index:start_index + self.config.batch_size],
-                'context_lengths': dataset['context_lengths'][start_index:start_index + self.config.batch_size]
+                'questions': questions[start_index:start_index + self.config.batch_size],
+                'question_lengths': map(len, questions[start_index:start_index + self.config.batch_size]),
+                'contexts': contexts[start_index:start_index + self.config.batch_size],
+                'context_lengths': map(len, contexts[start_index:start_index + self.config.batch_size]),
             }
-            batch_y = dataset['answers_numeric_list'][start_index:start_index + self.config.batch_size]
+            batch_y = answers[start_index:start_index + self.config.batch_size]
             batches.append((batch_x, batch_y))
 
         print("Created", str(len(batches)), "batches")
@@ -556,7 +557,7 @@ class QASystem(object):
 
         return (a_s, a_e)
 
-    def validate(self, sess, valid_dataset):
+    def validate(self, sess, valid_dataset_batches):
         # jorisvanmens: prefab code, not used
         """
         Iterate through the validation dataset and determine what
@@ -571,9 +572,8 @@ class QASystem(object):
         """
         valid_cost = 0
 
-        for valid_x, valid_y in valid_dataset:
-          valid_cost = self.test(sess, valid_x, valid_y)
-
+        for valid_x, valid_y in valid_dataset_batches:
+            valid_cost = self.test(sess, valid_x, valid_y)
 
         return valid_cost
 
@@ -703,6 +703,9 @@ class QASystem(object):
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
                 if (idx + 1) % after_each_batch == 0:
+                    test_batch_x, test_batch_y = random.choice(data_batches)
+                    test_valid_loss = self.test(session, test_batch_x, test_batch_y)
+                    logging.info("Sample alidation loss: %s" % format(test_valid_loss, '.5f'))
                     f1, em = self.evaluate_answer(session, test_data_batches)
                     if test: #test the graph
                         logging.info("Graph successfully executes.")
