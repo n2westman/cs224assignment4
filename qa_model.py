@@ -453,7 +453,7 @@ class QASystem(object):
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
             self.setup_system()
-            if model == 'baseline':
+            if model == 'baseline' or model == 'baseline-v2':
                 self.setup_loss()
             else:
                 self.setup_hmn_loss()
