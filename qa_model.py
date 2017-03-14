@@ -35,14 +35,9 @@ class Config:
     instantiation.
     """
 
-    # TODO(nwestman): move to flags as needed
-    batches_per_save = 100
-    after_each_batch = 10
-    num_epochs = 10
-    shuffle = True
-
     def __init__(self, FLAGS):
         self.test = FLAGS.test
+        self.shuffle = FLAGS.shuffle
         self.learning_rate = FLAGS.learning_rate
         self.max_gradient_norm = FLAGS.max_gradient_norm
         self.dropout = FLAGS.dropout
@@ -56,6 +51,10 @@ class Config:
         self.n_hidden_dec_v3 = FLAGS.n_hidden_dec_v3
         self.n_hidden_dec_hmn = FLAGS.n_hidden_dec_hmn
         self.max_examples = FLAGS.max_examples
+        self.maxout_size = FLAGS.maxout_size
+        self.max_decode_steps = FLAGS.max_decode_steps
+        self.batches_per_save = FLAGS.batches_per_save
+        self.after_each_batch = FLAGS.after_each_batch
         self.data_dir = FLAGS.data_dir
         self.train_dir = FLAGS.train_dir
         self.load_train_dir = FLAGS.load_train_dir
@@ -299,8 +298,8 @@ class HMNDecoder(object,):
         """
         # coattention_encoding: samples x context_words x 2*n_hidden_mix
         # return value: samples x context_words x 2*n_hidden_dec
-        maxout_size = 32
-        max_decode_steps = 4
+        maxout_size = self.config.maxout_size
+        max_decode_steps = self.config.max_decode_steps
         self._initial_guess = np.zeros((2, self.config.batch_size), dtype=np.int32)
         self._u = coattention_encoding
         print("_u", self._u.get_shape())
@@ -703,7 +702,7 @@ class QASystem(object):
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
-        for epoch in xrange(self.config.num_epochs):
+        for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
             data_batches = self.split_in_batches(dataset['train'], self.config.batch_size)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
