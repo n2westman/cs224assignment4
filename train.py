@@ -25,7 +25,7 @@ tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batc
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
@@ -99,14 +99,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
     (not sure if beneficial, given loading and preprocessing is fast)
 
-    :return: A dictionary of parallel lists.
-    dataset = {
-        'questions': [],
-        'question_lengths': [],
-        'contexts': [],
-        'context_lengths': [],
-        'answers_numeric_list': [],
-    }
+    :return: A list of (inputs, labels) tuples, where inputs are (q, c)
     """
 
     logging.info("Loading dataset: %s " % dataset)
@@ -119,13 +112,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     assert os.path.exists(answer_span_file)
 
     # Definition of the dataset -- note definition appears in multiple places
-    dataset = {
-        'questions': [],
-        'question_lengths': [],
-        'contexts': [],
-        'context_lengths': [],
-        'answers_numeric_list': [],
-    }
+    questions = []
+    contexts = []
+    answers = []
 
     # Parameters
     ADD_PADDING = True # Add padding to make all questions and contexts the same length
@@ -165,11 +154,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
                 del context[max_context_length:]
 
             # Add datum to dataset
-            dataset['questions'].append(question)
-            dataset['question_lengths'].append(len(question))
-            dataset['contexts'].append(context)
-            dataset['context_lengths'].append(len(context))
-            dataset['answers_numeric_list'].append(answer)
+            questions.append(question)
+            contexts.append(context)
+            answers.append(answer)
 
             # Track max question & context lengths for adding padding later on
             if ADD_PADDING:
@@ -184,12 +171,14 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     # Add padding
     if ADD_PADDING:
-        for question in dataset['questions']:
+        for question in questions:
             question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-        for context in dataset['contexts']:
+        for context in contexts:
             context.extend([str(PAD_ID)] * (max_context_length - len(context)))
 
     logging.info("Dataset loaded with %s samples" % num_examples)
+
+    dataset = zip(zip(questions, contexts), answers)
 
     return dataset
 
@@ -209,13 +198,17 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size,
-        learning_rate=FLAGS.learning_rate,
-        dropout=FLAGS.dropout,
-        state_size=FLAGS.state_size,
-        maxout_size=FLAGS.maxout_size,
-        max_decode_steps=FLAGS.max_decode_steps
-        )
+    configKwargs = {
+        'batch_size': FLAGS.batch_size,
+        'learning_rate': FLAGS.learning_rate,
+        'dropout': FLAGS.dropout,
+        'test': FLAGS.test,
+        'state_size': FLAGS.state_size,
+        'maxout_size': FLAGS.maxout_size,
+        'max_decode_steps': FLAGS.max_decode_steps
+    }
+    config = Config(**configKwargs)
+    encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
 
     if FLAGS.model == 'baseline':
         encoder = BiLSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=config.state_size)
@@ -249,7 +242,7 @@ def main(_):
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
         # Kick off actual training
-        qa.train(sess, dataset, save_train_dir, FLAGS.log_dir, test=FLAGS.test)
+        qa.train(sess, dataset, save_train_dir)
 
         #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
 
