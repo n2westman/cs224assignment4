@@ -94,9 +94,10 @@ class Encoder(object):
             initial_state_fw = None
             initial_state_bw = None
 
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-        hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
+        with tf.variable_scope("Encoder"):
+            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
                                                       embeddings,
                                                       initial_state_fw=initial_state_fw,
@@ -166,6 +167,7 @@ class Mixer(object):
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
+
         # Forward direction cell
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
         # Backward direction cell
@@ -177,7 +179,9 @@ class Mixer(object):
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
 
-        U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
+        with tf.variable_scope("Mixer"):
+            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
+
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
         return tf.concat(U, 2), U_final_hidden
@@ -219,7 +223,7 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        USE_DECODER_VERSION = 2
+        USE_DECODER_VERSION = 3
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
         if USE_DECODER_VERSION == 3:
@@ -696,11 +700,13 @@ class QASystem(object):
         :return:
         """
 
-        tic = time.time()
-        params = tf.trainable_variables()
-        num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
-        toc = time.time()
-        logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
+        total_parameters = 0
+        for variable in tf.trainable_variables():
+            shape = variable.get_shape()
+            var_params = variable.get_shape().num_elements()
+            total_parameters = total_parameters + var_params
+            logging.info("Tensor %s has shape %s with %d parameters" % (variable.name, str(shape), var_params))
+        logging.info("%d total parameters" % total_parameters)
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
