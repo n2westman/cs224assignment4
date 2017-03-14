@@ -41,7 +41,10 @@ tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicate
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
+tf.app.flags.DEFINE_string("max_decode_steps", 4, "max_decode_steps for MHN model")
+tf.app.flags.DEFINE_string("maxout_size", 32, "maxout_size for MHN model")
 
+ 
 FLAGS = tf.app.flags.FLAGS
 
 
@@ -206,16 +209,27 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate, dropout=FLAGS.dropout, state_size=FLAGS.state_size)
+    config = Config(batch_size=FLAGS.batch_size,
+        learning_rate=FLAGS.learning_rate,
+        dropout=FLAGS.dropout,
+        state_size=FLAGS.state_size,
+        maxout_size=FLAGS.maxout_size,
+        max_decode_steps=FLAGS.max_decode_steps
+        )
 
     if FLAGS.model == 'baseline':
-        encoder = BiLSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=FLAGS.state_size)
-        decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=FLAGS.state_size)
+        encoder = BiLSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=config.state_size)
+        decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=config.state_size)
     else:
-        encoder = LSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=FLAGS.state_size)
-        decoder = HMNDecoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=FLAGS.state_size)
+        encoder = LSTMEncoder(size=config.state_size, vocab_dim=FLAGS.embedding_size, state_size=config.state_size)
+        decoder = HMNDecoder(output_size=FLAGS.output_size, 
+            batch_size=config.batch_size,
+            state_size=config.state_size,
+            maxout_size=config.maxout_size, 
+            max_decode_steps=config.max_decode_steps
+        )
 
-    mixer = Mixer(state_size=FLAGS.state_size)
+    mixer = Mixer(state_size=config.state_size)
 
     qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length, config, FLAGS.model)
 

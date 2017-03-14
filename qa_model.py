@@ -26,9 +26,7 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-maxout_size = 32
 max_timesteps = 600
-max_decode_steps = 4
 
 def variable_summaries(var):
   """Attach a lot of summaries to a Tensor (for TensorBoard visualization)."""
@@ -51,12 +49,14 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15, state_size=200):
+    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15, state_size=200, maxout_size = 32, max_decode_steps = 4):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
         self.dropout = dropout
         self.state_size = state_size
+        self.maxout_size = maxout_size
+        self.max_decode_steps = max_decode_steps
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -312,10 +312,12 @@ class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
 
-    def __init__(self, output_size, batch_size, state_size):
+    def __init__(self, output_size, batch_size, state_size, maxout_size, max_decode_steps):
         self.output_size = output_size
         self.n_hidden_dec = state_size
         self.batch_size = batch_size
+        self.maxout_size = maxout_size
+        self.max_decode_steps = max_decode_steps
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
         """
@@ -349,8 +351,8 @@ class HMNDecoder(object):
             # LSTM for decoding
             lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec)
             # init highway fn
-            highway_alpha = highway_maxout(self.n_hidden_dec, maxout_size)
-            highway_beta = highway_maxout(self.n_hidden_dec, maxout_size)
+            highway_alpha = highway_maxout(self.n_hidden_dec, self.maxout_size)
+            highway_beta = highway_maxout(self.n_hidden_dec, self.maxout_size)
 
             # _u dimension: (batch_size, context, 2*hidden_size)
             # reshape self._u to (context, batch_size, 2*hidden_size)
@@ -371,7 +373,7 @@ class HMNDecoder(object):
         self._s, self._e = [], []
         self._alpha, self._beta = [], []
         with tf.variable_scope("Decoder") as scope:
-            for step in range(max_decode_steps):
+            for step in range(self.max_decode_steps):
                 if step > 0: scope.reuse_variables()
                 # single step lstm
                 _input = tf.concat([u_s, u_e], 1)
