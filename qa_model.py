@@ -41,6 +41,7 @@ class Config:
     """
 
     # TODO(nwestman): move to flags as needed
+    batches_per_save = 100
     after_each_batch = 10
     num_epochs = 10
     shuffle = True
@@ -706,11 +707,20 @@ class QASystem(object):
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
+                if (idx + 1) % self.config.batches_per_save == 0:
+                    logging.info("Saving model after batch %s" % str(idx))
+                    tic = time.time()
+                    checkpoint_path = self.saver.save(session, train_dir)
+                    tf.train.update_checkpoint_state(train_dir, checkpoint_path)
+                    toc = time.time()
+                    logging.info("Saved in %s seconds" % format(toc - tic, '.2f'))
+
                 if (idx + 1) % self.config.after_each_batch == 0 or self.config.test:
                     _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
                     logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
                         exit(0)
+
             checkpoint_path = self.saver.save(session, train_dir)
             tf.train.update_checkpoint_state(train_dir, checkpoint_path)
