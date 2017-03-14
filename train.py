@@ -205,7 +205,7 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     config = Config(FLAGS)
-    if FLAGS.model == 'baseline':
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2':
         encoder = BiLSTMEncoder(FLAGS)
         decoder = Decoder(FLAGS)
     else:
