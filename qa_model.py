@@ -658,26 +658,28 @@ class QASystem(object):
         f1 = 0.
         em = 0.
 
+        # cap number of samples
+        dataset = dataset[:sample]
 
         questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
-        data_batches = self.split_in_batches(questions, contexts, sample, answers=answers)
+        data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
 
-        test_batch_x, test_batch_y = random.choice(data_batches)
-        valid_loss = self.test(session, test_batch_x, test_batch_y)
-        answers_numeric_list = test_batch_y
-        answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
+        for test_batch_x, test_batch_y in data_batches:
+            valid_loss = self.test(session, test_batch_x, test_batch_y)
+            answers_numeric_list = test_batch_y
+            answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
 
-        for idx, answer_indices in enumerate(answers_numeric_list):
-            context = test_batch_x['contexts'][idx]
+            for idx, answer_indices in enumerate(answers_numeric_list):
+                context = test_batch_x['contexts'][idx]
 
-            answer_indices = map(int, answer_indices)
-            prediction_indices = [answer_start_predictions[idx], answer_end_predictions[idx]]
+                answer_indices = map(int, answer_indices)
+                prediction_indices = [answer_start_predictions[idx], answer_end_predictions[idx]]
 
-            ground_truth_ids = ' '.join(context[answer_indices[0]: answer_indices[1] + 1])
-            prediction_ids = ' '.join(context[prediction_indices[0]: prediction_indices[1] + 1])
+                ground_truth_ids = ' '.join(context[answer_indices[0]: answer_indices[1] + 1])
+                prediction_ids = ' '.join(context[prediction_indices[0]: prediction_indices[1] + 1])
 
-            f1 += f1_score(prediction_ids, ground_truth_ids)
-            em += exact_match_score(prediction_ids, ground_truth_ids)
+                f1 += f1_score(prediction_ids, ground_truth_ids)
+                em += exact_match_score(prediction_ids, ground_truth_ids)
 
         em = 100.0 * em / len(answers_numeric_list)
         f1 = 100.0 * f1 / len(answers_numeric_list)
@@ -774,4 +776,3 @@ class QASystem(object):
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
                         exit(0)
-
