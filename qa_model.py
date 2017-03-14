@@ -767,14 +767,4 @@ class QASystem(object):
                     tf.train.update_checkpoint_state(train_dir, checkpoint_path)
                     toc = time.time()
                     logging.info("Saved in %s seconds" % format(toc - tic, '.2f'))
-                    exit(0)
-
-                if (idx + 1) % self.config.after_each_batch == 0 or self.config.test:
-                    _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
-                    logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
-                    if self.config.test: #test the graph
-                        logging.info("Graph successfully executes.")
-                        exit(0)
-
-            checkpoint_path = self.saver.save(session, train_dir)
-            tf.train.update_checkpoint_state(train_dir, checkpoint_path)
+                    
