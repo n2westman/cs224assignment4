@@ -703,11 +703,9 @@ class QASystem(object):
         total_parameters = 0
         for variable in tf.trainable_variables():
             shape = variable.get_shape()
-            variable_parameters = 1
-            for dim in shape:
-                variable_parameters *= dim.value
-                total_parameters = total_parameters + variable_parameters
-            logging.info("Tensor %s has shape %s with %d parameters" % (variable.name, str(shape), variable_parameters))
+            var_params = variable.get_shape().num_elements()
+            total_parameters = total_parameters + var_params
+            logging.info("Tensor %s has shape %s with %d parameters" % (variable.name, str(shape), var_params))
         logging.info("%d total parameters" % total_parameters)
 
         for epoch in xrange(self.config.epochs):
