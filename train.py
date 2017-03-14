@@ -22,15 +22,24 @@ logging.basicConfig(level=logging.INFO)
 
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
 tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
+tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
-tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
+tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
+tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
+tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_v3", 20, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
+tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
+tf.app.flags.DEFINE_integer("max_decode_steps", 4, "Max decode steps for HMN.")
+tf.app.flags.DEFINE_integer("batches_per_save", 100, "Save model after every x batches.")
+tf.app.flags.DEFINE_integer("after_each_batch", 10, "Evaluate model after every x batches.")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
@@ -41,12 +50,8 @@ tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicate
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
-tf.app.flags.DEFINE_string("max_decode_steps", 4, "max_decode_steps for MHN model")
-tf.app.flags.DEFINE_string("maxout_size", 32, "maxout_size for MHN model")
-
  
 FLAGS = tf.app.flags.FLAGS
-
 
 def initialize_model(session, model, train_dir):
     ckpt = tf.train.get_checkpoint_state(train_dir)
@@ -188,43 +193,25 @@ def main(_):
     # Mix of pre-fab code and our code
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
-    max_context_length = FLAGS.output_size
     dataset = {
-        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', max_context_length, max_examples=FLAGS.max_examples),
-        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', max_context_length, max_examples=FLAGS.max_examples)
+        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, FLAGS.max_examples),
+        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, FLAGS.max_examples)
     }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    configKwargs = {
-        'batch_size': FLAGS.batch_size,
-        'learning_rate': FLAGS.learning_rate,
-        'dropout': FLAGS.dropout,
-        'test': FLAGS.test,
-        'state_size': FLAGS.state_size,
-        'maxout_size': FLAGS.maxout_size,
-        'max_decode_steps': FLAGS.max_decode_steps
-    }
-    config = Config(**configKwargs)
-    encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-
+    config = Config(FLAGS)
     if FLAGS.model == 'baseline':
-        encoder = BiLSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=config.state_size)
-        decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=config.state_size)
+        encoder = BiLSTMEncoder(FLAGS)
+        decoder = Decoder(FLAGS)
     else:
-        encoder = LSTMEncoder(size=config.state_size, vocab_dim=FLAGS.embedding_size, state_size=config.state_size)
-        decoder = HMNDecoder(output_size=FLAGS.output_size, 
-            batch_size=config.batch_size,
-            state_size=config.state_size,
-            maxout_size=config.maxout_size, 
-            max_decode_steps=config.max_decode_steps
-        )
+        encoder = LSTMEncoder(FLAGS)
+        decoder = HMNDecoder(FLAGS)
+    mixer = Mixer(FLAGS)
 
-    mixer = Mixer(state_size=config.state_size)
-
-    qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length, config, FLAGS.model)
+    qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)

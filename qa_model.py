@@ -26,8 +26,6 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-max_timesteps = 600
-
 # jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
 class Config:
     """Holds model hyperparams and data information.
@@ -37,28 +35,43 @@ class Config:
     instantiation.
     """
 
-    # TODO(nwestman): move to flags as needed
-    batches_per_save = 100
-    after_each_batch = 10
-    num_epochs = 10
-    shuffle = True
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15, state_size=200, maxout_size = 32, max_decode_steps = 4, test=False):
-        self.batch_size = batch_size
-        self.optimizer = optimizer
-        self.learning_rate = learning_rate
-        self.dropout = dropout
-        self.state_size = state_size
-        self.maxout_size = maxout_size
-        self.max_decode_steps = max_decode_steps
-        self.test = test
+    def __init__(self, FLAGS):
+        self.test = FLAGS.test
+        self.shuffle = FLAGS.shuffle
+        self.learning_rate = FLAGS.learning_rate
+        self.max_gradient_norm = FLAGS.max_gradient_norm
+        self.dropout = FLAGS.dropout
+        self.batch_size = FLAGS.batch_size
+        self.epochs = FLAGS.epochs
+        self.state_size = FLAGS.state_size
+        self.output_size = FLAGS.output_size
+        self.embedding_size = FLAGS.embedding_size
+        self.n_hidden_enc = FLAGS.n_hidden_enc
+        self.n_hidden_mix = FLAGS.n_hidden_mix
+        self.n_hidden_dec_v3 = FLAGS.n_hidden_dec_v3
+        self.n_hidden_dec_hmn = FLAGS.n_hidden_dec_hmn
+        self.max_examples = FLAGS.max_examples
+        self.maxout_size = FLAGS.maxout_size
+        self.max_decode_steps = FLAGS.max_decode_steps
+        self.batches_per_save = FLAGS.batches_per_save
+        self.after_each_batch = FLAGS.after_each_batch
+        self.data_dir = FLAGS.data_dir
+        self.train_dir = FLAGS.train_dir
+        self.load_train_dir = FLAGS.load_train_dir
+        self.log_dir = FLAGS.log_dir
+        self.optimizer = FLAGS.optimizer
+        self.print_every = FLAGS.print_every
+        self.keep = FLAGS.keep
+        self.vocab_path = FLAGS.vocab_path
+        self.embed_path = FLAGS.embed_path
+        self.model = FLAGS.model
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, size, vocab_dim, state_size):
-        self.size = size
-        self.vocab_dim = vocab_dim
-        self.n_hidden_enc = state_size
+    def __init__(self, FLAGS):
+        self.config = Config(FLAGS)
+
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -82,8 +95,10 @@ class BiLSTMEncoder(object):
         else:
             initial_state_fw = None
             initial_state_bw = None
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
+
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+
         hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
                                                       embeddings,
@@ -94,11 +109,8 @@ class BiLSTMEncoder(object):
         return tf.concat(hidden_state, 2), final_state
 
 class LSTMEncoder(object):
-    # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, size, vocab_dim, state_size):
-        self.size = size
-        self.vocab_dim = vocab_dim
-        self.n_hidden_enc = state_size
+    def __init__(self, FLAGS):
+        self.config = Config(FLAGS)
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -115,7 +127,7 @@ class LSTMEncoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
+        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
         hidden_state, final_state = tf.nn.dynamic_rnn(lstm_cell,
                                                   embeddings,
                                                   initial_state=initial_state,
@@ -125,7 +137,7 @@ class LSTMEncoder(object):
         return hidden_state, final_state
 
 class FFNN(object):
-    def __init__(self, input_size, output_size, hidden_size=200):
+    def __init__(self, input_size, output_size, hidden_size):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -157,8 +169,8 @@ class FFNN(object):
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
-    def __init__(self, state_size):
-            self.n_hidden_mix = state_size
+    def __init__(self, FLAGS):
+            self.config = Config(FLAGS)
 
     def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
@@ -186,9 +198,9 @@ class Mixer(object):
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
         # Forward direction cell
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
         # Backward direction cell
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_mix, forget_bias=1.0)
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
 
         # Dimensionalities:
         # D_C_d: samples x context_words x 3*2*n_hidden_enc
@@ -204,10 +216,8 @@ class Mixer(object):
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
 
-    def __init__(self, output_size, batch_size, state_size):
-        self.output_size = output_size
-        self.n_hidden_dec = state_size
-        self.batch_size = batch_size
+    def __init__(self, FLAGS):
+        self.config = Config(FLAGS)
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
         """
@@ -240,25 +250,25 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        USE_DECODER_VERSION = 3
+        USE_DECODER_VERSION = 2
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
         if USE_DECODER_VERSION == 3:
             # This decoder also uses the full coattention matrix as input
             # It then takes a matrix coattention column (corresponding to a single context word)
             # And throws it into a simple FFNN
-            Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
+            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
             output_size = 1
 
             with tf.variable_scope("StartPredictor"):
-                start_ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
+                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
                 start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
-                start_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+                start_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
             with tf.variable_scope("EndPredictor"):
-                end_ffnn = FFNN(n_hidden_mix, output_size, self.n_hidden_dec)
+                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
                 end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
-                end_pred = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+                end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
 
         elif USE_DECODER_VERSION == 2:
@@ -268,32 +278,29 @@ class Decoder(object):
 
             Wnew_shape = (n_hidden_mix, 1)
             #bnew_shape = (1)
-            Ureshape = tf.reshape(U, [-1, 2 * self.n_hidden_dec])
+
+            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+
             initializer = tf.contrib.layers.xavier_initializer()
 
             with tf.variable_scope("StartPredictor"):
                 Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 start_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
-                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, max_timesteps])
+                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
                 start_pred = start_pred_tmp2# + bnew
 
             with tf.variable_scope("EndPredictor"):
                 Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 end_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
-                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, max_timesteps])
+                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
                 end_pred = end_pred_tmp2# + bnew
 
         else:
             # This uses only the final hidden layer from the coattention matrix,
             # and feeds it into a simple neural net
-
-            num_samples = coattention_encoding.get_shape()[0]
-            max_context_words = coattention_encoding.get_shape()[1]
-            n_hidden_mix = coattention_encoding.get_shape()[2]
-
-            ffnn = FFNN(n_hidden_mix, self.n_hidden_dec, max_context_words)
+            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec, self.config.output_size)
 
             with tf.variable_scope("StartPredictor"):
                 start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
@@ -303,16 +310,13 @@ class Decoder(object):
 
         return start_pred, end_pred
 
-class HMNDecoder(object):
+class HMNDecoder(object,):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
 
-    def __init__(self, output_size, batch_size, state_size, maxout_size, max_decode_steps):
-        self.output_size = output_size
-        self.n_hidden_dec = state_size
-        self.batch_size = batch_size
-        self.maxout_size = maxout_size
-        self.max_decode_steps = max_decode_steps
+
+    def __init__(self, FLAGS):
+        self.config = Config(FLAGS)
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
         """
@@ -328,7 +332,9 @@ class HMNDecoder(object):
         """
         # coattention_encoding: samples x context_words x 2*n_hidden_mix
         # return value: samples x context_words x 2*n_hidden_dec
-        self._initial_guess = np.zeros((2, self.batch_size), dtype=np.int32)
+        maxout_size = self.config.maxout_size
+        max_decode_steps = self.config.max_decode_steps
+        self._initial_guess = np.zeros((2, self.config.batch_size), dtype=np.int32)
         self._u = coattention_encoding
 
         def select(u, pos, idx):
@@ -344,17 +350,18 @@ class HMNDecoder(object):
 
         with tf.variable_scope('selector'):
             # LSTM for decoding
-            lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec)
-            # init highway fn
-            highway_alpha = highway_maxout(self.n_hidden_dec, self.maxout_size)
-            highway_beta = highway_maxout(self.n_hidden_dec, self.maxout_size)
 
-            # _u dimension: (batch_size, context, 2*hidden_size)
-            # reshape self._u to (context, batch_size, 2*hidden_size)
-            U = tf.transpose(self._u[:,:max_timesteps,:], perm=[1, 0, 2])
+            lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_hmn)
+            # init highway fn
+            highway_alpha = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
+            highway_beta = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
+
+            # _u dimension: (batch_size, context, 2*self.config.n_hidden_dec_hmn)
+            # reshape self._u to (context, batch_size, 2*self.config.n_hidden_dec_hmn)
+            U = tf.transpose(self._u[:,:self.config.output_size,:], perm=[1, 0, 2])
 
             # batch indices
-            loop_until = tf.to_int32(np.array(range(self.batch_size)))
+            loop_until = tf.to_int32(np.array(range(self.config.batch_size)))
             # initial estimated positions
             # s and e have dimension [self.batch_size]
             s, e = tf.split(self._initial_guess, 2, 0)
@@ -391,7 +398,7 @@ class HMNDecoder(object):
                   print("u_s", u_s)
                   fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
                   alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  s = tf.reshape(tf.argmax(alpha, 0), [self.batch_size])
+                  s = tf.reshape(tf.argmax(alpha, 0), [self.config.batch_size])
                   # update start guess
                   fn = lambda idx: select(self._u, s, idx)
                   u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
@@ -400,19 +407,19 @@ class HMNDecoder(object):
                   # compute end position next
                   fn = lambda u_t: highway_beta(u_t, h_state, u_s, u_e)
                   beta = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  e = tf.reshape(tf.argmax(beta, 0), [self.batch_size])
+                  e = tf.reshape(tf.argmax(beta, 0), [self.config.batch_size])
                   # update end guess
                   fn = lambda idx: select(self._u, e, idx)
                   u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
 
                 self._s.append(s)
                 self._e.append(e)
-                self._alpha.append(tf.reshape(alpha, [self.batch_size, -1]))
-                self._beta.append(tf.reshape(beta, [self.batch_size, -1]))
+                self._alpha.append(tf.reshape(alpha, [self.config.batch_size, -1]))
+                self._beta.append(tf.reshape(beta, [self.config.batch_size, -1]))
         return self._alpha, self._beta
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path, max_context_length, config, model):
+    def __init__(self, encoder, decoder, mixer, embed_path, config, model):
         """
         Initializes your System
 
@@ -430,7 +437,7 @@ class QASystem(object):
 
         self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
         self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, max_context_length))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.output_size))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
         self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
@@ -725,7 +732,7 @@ class QASystem(object):
         toc = time.time()
         logging.info("Number of params: %d (retreival took %f secs)" % (num_params, toc - tic))
 
-        for epoch in xrange(self.config.num_epochs):
+        for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
             data_batches = self.split_in_batches(dataset['train'], self.config.batch_size)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
