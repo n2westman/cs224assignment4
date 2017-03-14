@@ -10,7 +10,7 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
-from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -206,13 +206,16 @@ def main(_):
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
-    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate, dropout=FLAGS.dropout)
-    encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
+    config = Config(batch_size=FLAGS.batch_size, learning_rate=FLAGS.learning_rate, dropout=FLAGS.dropout, state_size=FLAGS.state_size)
+
     if FLAGS.model == 'baseline':
-        decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size)
+        encoder = BiLSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=FLAGS.state_size)
+        decoder = Decoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=FLAGS.state_size)
     else:
-        decoder = HMNDecoder(output_size=FLAGS.output_size, batch_size=config.batch_size)
-    mixer = Mixer()
+        encoder = LSTMEncoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size, state_size=FLAGS.state_size)
+        decoder = HMNDecoder(output_size=FLAGS.output_size, batch_size=config.batch_size, state_size=FLAGS.state_size)
+
+    mixer = Mixer(state_size=FLAGS.state_size)
 
     qa = QASystem(encoder, decoder, mixer, embed_path, max_context_length, config, FLAGS.model)
 
@@ -221,7 +224,7 @@ def main(_):
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
     logging.getLogger().addHandler(file_handler)
 
-    #print(vars(FLAGS))
+    print("Model parameters: ", vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 

@@ -26,7 +26,6 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
-hidden_size = 200
 maxout_size = 32
 max_timesteps = 600
 max_decode_steps = 4
@@ -52,18 +51,19 @@ class Config:
     instantiation.
     """
 
-    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15):
+    def __init__(self, batch_size=100, optimizer="adam", learning_rate=0.001, dropout=0.15, state_size=200):
         self.batch_size = batch_size
         self.optimizer = optimizer
         self.learning_rate = learning_rate
         self.dropout = dropout
+        self.state_size = state_size
 
-class Encoder(object):
+class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, size, vocab_dim):
+    def __init__(self, size, vocab_dim, state_size):
         self.size = size
         self.vocab_dim = vocab_dim
-        self.n_hidden_enc = 200
+        self.n_hidden_enc = state_size
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -87,18 +87,48 @@ class Encoder(object):
         else:
             initial_state_fw = None
             initial_state_bw = None
-
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
         lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
         hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
-                                                      lstm_bw_cell,
-                                                      embeddings,
-                                                      initial_state_fw=initial_state_fw,
-                                                      initial_state_bw=initial_state_bw,
-                                                      sequence_length=sequence_length,
-                                                      dtype=tf.float32)
+                                                  lstm_bw_cell,
+                                                  embeddings,
+                                                  initial_state_fw=initial_state_fw,
+                                                  initial_state_bw=initial_state_bw,
+                                                  sequence_length=sequence_length,
+                                                  dtype=tf.float32)
 
         return tf.concat(hidden_state, 2), final_state
+
+class LSTMEncoder(object):
+    # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
+    def __init__(self, size, vocab_dim, state_size):
+        self.size = size
+        self.vocab_dim = vocab_dim
+        self.n_hidden_enc = state_size
+
+    def encode(self, embeddings, sequence_length, initial_state=None):
+        """
+        In a generalized encode function, you pass in your inputs,
+        masks, and an initial
+        hidden state input into this function.
+
+        :param inputs: Symbolic representations of your input
+        :param masks: this is to make sure tf.nn.dynamic_rnn doesn't iterate
+                      through masked steps
+        :param encoder_state_input: (Optional) pass this as initial hidden state
+                                    to tf.nn.dynamic_rnn to build conditional representations
+        :return: an encoded representation of your input.
+                 It can be context-level representation, word-level representation,
+                 or both.
+        """
+        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_enc, forget_bias=1.0)
+        hidden_state, final_state = tf.nn.dynamic_rnn(lstm_cell,
+                                                  embeddings,
+                                                  initial_state=initial_state,
+                                                  sequence_length=sequence_length,
+                                                  dtype=tf.float32)
+
+        return hidden_state, final_state
 
 class FFNN(object):
     def __init__(self, input_size, output_size, hidden_size=200):
@@ -144,8 +174,8 @@ class FFNN(object):
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
-    def __init__(self):
-            self.n_hidden_mix = 200
+    def __init__(self, state_size):
+            self.n_hidden_mix = state_size
 
     def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
@@ -197,9 +227,9 @@ class Mixer(object):
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
 
-    def __init__(self, output_size, batch_size):
+    def __init__(self, output_size, batch_size, state_size):
         self.output_size = output_size
-        self.n_hidden_dec = 600
+        self.n_hidden_dec = state_size
         self.batch_size = batch_size
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
@@ -242,7 +272,7 @@ class Decoder(object):
 
             Wnew_shape = (n_hidden_mix, 1)
             bnew_shape = (max_context_words)
-            Ureshape = tf.reshape(U, [-1, 2 * hidden_size])
+            Ureshape = tf.reshape(U, [-1, 2 * self.n_hidden_dec])
             initializer = tf.contrib.layers.xavier_initializer()
 
             with tf.variable_scope("StartPredictor"):
@@ -282,9 +312,9 @@ class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
 
-    def __init__(self, output_size, batch_size):
+    def __init__(self, output_size, batch_size, state_size):
         self.output_size = output_size
-        self.n_hidden_dec = 50
+        self.n_hidden_dec = state_size
         self.batch_size = batch_size
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
@@ -303,29 +333,24 @@ class HMNDecoder(object):
         # return value: samples x context_words x 2*n_hidden_dec
         self._initial_guess = np.zeros((2, self.batch_size), dtype=np.int32)
         self._u = coattention_encoding
-        print("_u", self._u.get_shape())
 
         def select(u, pos, idx):
               # u: (samples x context_words x 2 * n_hidden_mix)
               # sample: (context_words x 2 * n_hidden_mix)
               sample = tf.gather(u, idx)
-              print("sample", sample)
+
               # u_t: (2 * n_hidden_mix)
               pos_idx = tf.gather(tf.reshape(pos, [-1]), idx)
-              print("pos", pos)
-              print("pos_idx", pos_idx)
-              u_t = tf.gather( sample, pos_idx)
 
-              print("u_t", u_t.get_shape())
-              #reshaped_u_t = tf.reshape( u_t, [-1])
+              u_t = tf.gather( sample, pos_idx)
               return u_t
 
         with tf.variable_scope('selector'):
             # LSTM for decoding
-            lstm_dec = tf.contrib.rnn.BasicLSTMCell(hidden_size)
+            lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.n_hidden_dec)
             # init highway fn
-            highway_alpha = highway_maxout(hidden_size, maxout_size)
-            highway_beta = highway_maxout(hidden_size, maxout_size)
+            highway_alpha = highway_maxout(self.n_hidden_dec, maxout_size)
+            highway_beta = highway_maxout(self.n_hidden_dec, maxout_size)
 
             # _u dimension: (batch_size, context, 2*hidden_size)
             # reshape self._u to (context, batch_size, 2*hidden_size)
@@ -493,7 +518,7 @@ class QASystem(object):
         def _loss_multitask(logits_alpha, labels_alpha,
                           logits_beta, labels_beta):
             """Cumulative loss for start and end positions."""
-            with vs.variable_scope("loss"):
+            with tf.variable_scope("loss"):
                 fn = lambda logit, label: _loss_shared(logit, label)
                 loss_alpha = [fn(alpha, labels_alpha) for alpha in logits_alpha]
                 loss_beta = [fn(beta, labels_beta) for beta in logits_beta]
