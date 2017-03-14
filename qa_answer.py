@@ -149,17 +149,20 @@ def generate_answers(sess, model, dataset, rev_vocab):
     answers = {}
 
     contexts, questions, question_uuids = dataset
-
+    counter = 0
     batches = model.split_in_batches(questions, contexts, FLAGS.batch_size, question_uuids=question_uuids)
 
     for batch_x, batch_uuids in batches:
+        counter += 1
+        logging.info("Reading batch %s." % counter)
         start_indices, end_indices = model.answer(sess, batch_x)
         for idx in range(len(batch_uuids)):
             context = batch_x['contexts'][idx]
             sentence_ids = context[start_indices[idx]: end_indices[idx] + 1]
             sentence = " ".join(map(lambda x: rev_vocab[int(x)], sentence_ids))
             answers[batch_uuids[idx]] = sentence
-        exit(0)
+
+    logging.info("Produced %s answers for %s questions." % (len(answers), len(questions)))
 
     return answers
 
@@ -202,7 +205,7 @@ def main(_):
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
     logging.getLogger().addHandler(file_handler)
 
-    print(vars(FLAGS))
+    logging.info(vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 

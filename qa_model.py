@@ -5,6 +5,7 @@ from __future__ import print_function
 import time
 import logging
 import random
+import os
 
 import numpy as np
 import tensorflow as tf
@@ -402,6 +403,7 @@ class QASystem(object):
         self.decoder = decoder
         self.config = config
         self.pretrained_embeddings = np.load(embed_path)["glove"]
+        self.model = model
 
         # ==== set up placeholder tokens ========
 
@@ -707,6 +709,8 @@ class QASystem(object):
         :return:
         """
 
+        save_path = os.path.join(train_dir, self.model)
+
         tic = time.time()
         params = tf.trainable_variables()
         num_params = sum(map(lambda t: np.prod(tf.shape(t.value()).eval()), params))
@@ -726,7 +730,7 @@ class QASystem(object):
                 if (idx + 1) % self.config.batches_per_save == 0 or self.config.test:
                     logging.info("Saving model after batch %s" % str(idx))
                     tic = time.time()
-                    checkpoint_path = self.saver.save(session, train_dir)
+                    checkpoint_path = self.saver.save(session, save_path)
                     tf.train.update_checkpoint_state(train_dir, checkpoint_path)
                     toc = time.time()
                     logging.info("Saved in %s seconds" % format(toc - tic, '.2f'))
