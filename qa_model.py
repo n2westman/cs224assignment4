@@ -375,7 +375,7 @@ class HMNDecoder(object):
         self._s, self._e = [], []
         self._alpha, self._beta = [], []
         with tf.variable_scope("Decoder") as scope:
-            for step in range(self.max_decode_steps):
+            for step in range(max_decode_steps):
                 if step > 0: scope.reuse_variables()
                 # single step lstm
                 _input = tf.concat([u_s, u_e], 1)
