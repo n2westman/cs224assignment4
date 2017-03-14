@@ -310,11 +310,9 @@ class Decoder(object):
 
         return start_pred, end_pred
 
-class HMNDecoder(object,):
+class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
-
-
     def __init__(self, FLAGS):
         self.config = Config(FLAGS)
 
