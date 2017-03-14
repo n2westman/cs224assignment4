@@ -14,7 +14,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from qa_model import Encoder, QASystem, Decoder
+from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
 import qa_data
@@ -25,18 +25,35 @@ logging.basicConfig(level=logging.INFO)
 
 FLAGS = tf.app.flags.FLAGS
 
+tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
+tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
+tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
-tf.app.flags.DEFINE_integer("epochs", 0, "Number of epochs to train.")
-tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.")
+tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
+tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
+tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
-tf.app.flags.DEFINE_integer("output_size", 750, "The output size of your model.")
-tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
-tf.app.flags.DEFINE_string("train_dir", "train", "Training directory (default: ./train).")
+tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
+tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_v3", 20, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
+tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
+tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
+tf.app.flags.DEFINE_integer("max_decode_steps", 4, "Max decode steps for HMN.")
+tf.app.flags.DEFINE_integer("batches_per_save", 100, "Save model after every x batches.")
+tf.app.flags.DEFINE_integer("after_each_batch", 10, "Evaluate model after every x batches.")
+tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
+tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
+tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
 tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
+tf.app.flags.DEFINE_string("optimizer", "adam", "adam / sgd")
+tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")
+tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
+tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline).")
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
 
 def initialize_model(session, model, train_dir):
@@ -131,6 +148,19 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     answers = {}
 
+    contexts, questions, question_uuids = dataset
+
+    batches = model.split_in_batches(questions, contexts, FLAGS.batch_size, question_uuids=question_uuids)
+
+    for batch_x, batch_uuids in batches:
+        start_indices, end_indices = model.answer(sess, batch_x)
+        for idx in range(len(batch_uuids)):
+            context = batch_x['contexts'][idx]
+            sentence_ids = context[start_indices[idx]: end_indices[idx] + 1]
+            sentence = " ".join(map(lambda x: rev_vocab[int(x)], sentence_ids))
+            answers[batch_uuids[idx]] = sentence
+        exit(0)
+
     return answers
 
 
@@ -149,6 +179,17 @@ def get_normalized_train_dir(train_dir):
     os.symlink(os.path.abspath(train_dir), global_train_dir)
     return global_train_dir
 
+
+def process_data(data_list, max_length=None):
+    # 1: split the string
+    data_list = map(lambda x: x.split(), data_list)
+
+    # 2: Get max length if none
+    if max_length is None:
+        max_length = max(map(len, data_list))
+
+    # 3: Cap lengths + pad
+    return map(lambda x: x[:max_length] + ([str(qa_data.PAD_ID)] * (max_length - len(x))), data_list)
 
 def main(_):
 
@@ -171,15 +212,21 @@ def main(_):
     dev_dirname = os.path.dirname(os.path.abspath(FLAGS.dev_path))
     dev_filename = os.path.basename(FLAGS.dev_path)
     context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
+
+    context_data = process_data(context_data, FLAGS.output_size)
+    question_data = process_data(question_data)
+
     dataset = (context_data, question_data, question_uuid_data)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
 
-    encoder = Encoder(size=FLAGS.state_size, vocab_dim=FLAGS.embedding_size)
-    decoder = Decoder(output_size=FLAGS.output_size)
+    config = Config(FLAGS)
+    encoder = Encoder(FLAGS)
+    decoder = Decoder(FLAGS)
+    mixer = Mixer(FLAGS)
 
-    qa = QASystem(encoder, decoder)
+    qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 
     with tf.Session() as sess:
         train_dir = get_normalized_train_dir(FLAGS.train_dir)

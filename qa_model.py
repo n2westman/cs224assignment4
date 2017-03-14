@@ -389,7 +389,7 @@ class HMNDecoder(object,):
         return self._alpha, self._beta
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path, config, model):
+    def __init__(self, encoder, decoder, mixer, embed_path, config, model="baseline"):
         """
         Initializes your System
 
@@ -425,27 +425,36 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         self.saver = tf.train.Saver()
 
-    def split_in_batches(self, dataset, batch_size):
+    def shuffle_and_open_dataset(self, dataset):
         if self.config.shuffle:
             random.shuffle(dataset)
 
         inputs, answers = zip(*dataset)
         questions, contexts = zip(*inputs)
 
+        return questions, contexts, answers
+
+    def split_in_batches(self, questions, contexts, batch_size, answers=None, question_uuids=None):
         batches = []
-        for start_index in range(0, len(dataset), batch_size):
+        for start_index in range(0, len(questions), batch_size):
             batch_x = {
                 'questions': questions[start_index:start_index + batch_size],
                 'question_lengths': map(len, questions[start_index:start_index + batch_size]),
                 'contexts': contexts[start_index:start_index + batch_size],
                 'context_lengths': map(len, contexts[start_index:start_index + batch_size]),
             }
-            batch_y = answers[start_index:start_index + batch_size]
-            batches.append((batch_x, batch_y))
+            if answers is not None:
+                batch_y = answers[start_index:start_index + batch_size]
+                batches.append((batch_x, batch_y))
+            elif question_uuids is not None:
+                batch_uuids = question_uuids[start_index:start_index + batch_size]
+                batches.append((batch_x, batch_uuids))
+            else:
+                raise ValueError("Neither answers nor question uuids were provided")
 
         logging.debug("Expected batch_size: %s" % batch_size)
         logging.debug("Actual batch_size: %s" % len(batches[0][1]))
-        if len(dataset) > batch_size:
+        if len(questions) > batch_size:
             assert (batch_size == len(batches[0][1]))
 
         logging.info("Created %d batches" % len(batches))
@@ -616,7 +625,9 @@ class QASystem(object):
         f1 = 0.
         em = 0.
 
-        data_batches = self.split_in_batches(dataset, sample)
+
+        questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
+        data_batches = self.split_in_batches(questions, contexts, sample, answers=answers)
 
         test_batch_x, test_batch_y = random.choice(data_batches)
         valid_loss = self.test(session, test_batch_x, test_batch_y)
@@ -704,20 +715,22 @@ class QASystem(object):
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
-            data_batches = self.split_in_batches(dataset['train'], self.config.batch_size)
+            questions, contexts, answers = self.shuffle_and_open_dataset(dataset['train'])
+            data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
-                if (idx + 1) % self.config.batches_per_save == 0:
+                if (idx + 1) % self.config.batches_per_save == 0 or self.config.test:
                     logging.info("Saving model after batch %s" % str(idx))
                     tic = time.time()
                     checkpoint_path = self.saver.save(session, train_dir)
                     tf.train.update_checkpoint_state(train_dir, checkpoint_path)
                     toc = time.time()
                     logging.info("Saved in %s seconds" % format(toc - tic, '.2f'))
+                    exit(0)
 
                 if (idx + 1) % self.config.after_each_batch == 0 or self.config.test:
                     _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
