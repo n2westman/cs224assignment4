@@ -36,6 +36,7 @@ class Config:
     instantiation.
     """
 
+
     def __init__(self, FLAGS):
         self.test = FLAGS.test
         self.shuffle = FLAGS.shuffle
@@ -67,10 +68,11 @@ class Config:
         self.embed_path = FLAGS.embed_path
         self.model = FLAGS.model
 
-class Encoder(object):
+class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
     def __init__(self, FLAGS):
         self.config = Config(FLAGS)
+
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -106,6 +108,34 @@ class Encoder(object):
                                                       sequence_length=sequence_length,
                                                       dtype=tf.float32)
         return tf.concat(hidden_state, 2), final_state
+
+class LSTMEncoder(object):
+    def __init__(self, FLAGS):
+        self.config = Config(FLAGS)
+
+    def encode(self, embeddings, sequence_length, initial_state=None):
+        """
+        In a generalized encode function, you pass in your inputs,
+        masks, and an initial
+        hidden state input into this function.
+
+        :param inputs: Symbolic representations of your input
+        :param masks: this is to make sure tf.nn.dynamic_rnn doesn't iterate
+                      through masked steps
+        :param encoder_state_input: (Optional) pass this as initial hidden state
+                                    to tf.nn.dynamic_rnn to build conditional representations
+        :return: an encoded representation of your input.
+                 It can be context-level representation, word-level representation,
+                 or both.
+        """
+        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+        hidden_state, final_state = tf.nn.dynamic_rnn(lstm_cell,
+                                                  embeddings,
+                                                  initial_state=initial_state,
+                                                  sequence_length=sequence_length,
+                                                  dtype=tf.float32)
+
+        return hidden_state, final_state
 
 class FFNN(object):
     def __init__(self, input_size, output_size, hidden_size):
@@ -252,7 +282,9 @@ class Decoder(object):
 
             Wnew_shape = (n_hidden_mix, 1)
             #bnew_shape = (1)
+
             Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+
             initializer = tf.contrib.layers.xavier_initializer()
 
             with tf.variable_scope("StartPredictor"):
@@ -282,10 +314,9 @@ class Decoder(object):
 
         return start_pred, end_pred
 
-class HMNDecoder(object,):
+class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
-
     def __init__(self, FLAGS):
         self.config = Config(FLAGS)
 
@@ -307,25 +338,21 @@ class HMNDecoder(object,):
         max_decode_steps = self.config.max_decode_steps
         self._initial_guess = np.zeros((2, self.config.batch_size), dtype=np.int32)
         self._u = coattention_encoding
-        print("_u", self._u.get_shape())
 
         def select(u, pos, idx):
               # u: (samples x context_words x 2 * n_hidden_mix)
               # sample: (context_words x 2 * n_hidden_mix)
               sample = tf.gather(u, idx)
-              print("sample", sample)
+
               # u_t: (2 * n_hidden_mix)
               pos_idx = tf.gather(tf.reshape(pos, [-1]), idx)
-              print("pos", pos)
-              print("pos_idx", pos_idx)
-              u_t = tf.gather( sample, pos_idx)
 
-              print("u_t", u_t.get_shape())
-              #reshaped_u_t = tf.reshape( u_t, [-1])
+              u_t = tf.gather( sample, pos_idx)
               return u_t
 
         with tf.variable_scope('selector'):
             # LSTM for decoding
+
             lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_hmn)
             # init highway fn
             highway_alpha = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
@@ -514,7 +541,7 @@ class QASystem(object):
         def _loss_multitask(logits_alpha, labels_alpha,
                           logits_beta, labels_beta):
             """Cumulative loss for start and end positions."""
-            with vs.variable_scope("loss"):
+            with tf.variable_scope("loss"):
                 fn = lambda logit, label: _loss_shared(logit, label)
                 loss_alpha = [fn(alpha, labels_alpha) for alpha in logits_alpha]
                 loss_beta = [fn(beta, labels_beta) for beta in logits_beta]

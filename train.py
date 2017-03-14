@@ -10,7 +10,7 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
-from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -49,10 +49,9 @@ tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per pri
 tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
-tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline).")
-
+tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
+ 
 FLAGS = tf.app.flags.FLAGS
-
 
 def initialize_model(session, model, train_dir):
     ckpt = tf.train.get_checkpoint_state(train_dir)
@@ -204,10 +203,11 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     config = Config(FLAGS)
-    encoder = Encoder(FLAGS)
     if FLAGS.model == 'baseline':
+        encoder = BiLSTMEncoder(FLAGS)
         decoder = Decoder(FLAGS)
     else:
+        encoder = LSTMEncoder(FLAGS)
         decoder = HMNDecoder(FLAGS)
     mixer = Mixer(FLAGS)
 
@@ -218,7 +218,7 @@ def main(_):
     file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
     logging.getLogger().addHandler(file_handler)
 
-    #print(vars(FLAGS))
+    print("Model parameters: ", vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 
