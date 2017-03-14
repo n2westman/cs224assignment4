@@ -23,6 +23,7 @@ logging.basicConfig(level=logging.INFO)
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
 tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
 tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
+tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
@@ -54,6 +55,7 @@ tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default
 FLAGS = tf.app.flags.FLAGS
 
 def initialize_model(session, model, train_dir):
+    #save_path = os.path.join(train_dir, self.model)
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
     if ckpt and (tf.gfile.Exists(ckpt.model_checkpoint_path) or tf.gfile.Exists(v2_path)):
