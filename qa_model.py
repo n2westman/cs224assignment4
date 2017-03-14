@@ -664,7 +664,8 @@ class QASystem(object):
         questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
         data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
 
-        for test_batch_x, test_batch_y in data_batches:
+        for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
+            logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
             valid_loss = self.test(session, test_batch_x, test_batch_y)
             answers_numeric_list = test_batch_y
             answer_start_predictions, answer_end_predictions = self.answer(session, test_batch_x)
