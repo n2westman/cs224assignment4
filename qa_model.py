@@ -49,11 +49,11 @@ class Config:
         self.state_size = FLAGS.state_size
         self.output_size = FLAGS.output_size
         self.embedding_size = FLAGS.embedding_size
-        self.n_hidden_enc = FLAGS.n_hidden_enc
         self.n_hidden_mix = FLAGS.n_hidden_mix
         self.n_hidden_dec_v3 = FLAGS.n_hidden_dec_v3
         self.n_hidden_dec_hmn = FLAGS.n_hidden_dec_hmn
         self.max_examples = FLAGS.max_examples
+        self.max_question_length = FLAGS.max_question_length
         self.maxout_size = FLAGS.maxout_size
         self.max_decode_steps = FLAGS.max_decode_steps
         self.batches_per_save = FLAGS.batches_per_save
@@ -71,8 +71,8 @@ class Config:
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, input_size):
+        self.input_size = input_size
 
 
     def encode(self, embeddings, sequence_length, initial_state=None):
@@ -99,16 +99,16 @@ class BiLSTMEncoder(object):
             initial_state_bw = None
 
         with tf.variable_scope("Encoder"):
-            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-            hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
+            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.input_size, forget_bias=1.0)
+            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.input_size, forget_bias=1.0)
+            (hidden_state_fw, hidden_state_bw), final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
                                                       embeddings,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
                                                       dtype=tf.float32)
-        return tf.concat(hidden_state, 2), final_state
+        return hidden_state_fw + hidden_state_bw, final_state
 
 class LSTMEncoder(object):
     def __init__(self, FLAGS):
@@ -425,7 +425,7 @@ class HMNDecoder(object):
         return self._alpha, self._beta
 
 class QASystem(object):
-    def __init__(self, encoder, decoder, mixer, embed_path, config, model="baseline"):
+    def __init__(self, encoder, embed_path, config, model="baseline"):
         """
         Initializes your System
 
@@ -434,26 +434,24 @@ class QASystem(object):
         :param args: pass in more arguments as needed
         """
         self.encoder = encoder
-        self.mixer = mixer
-        self.decoder = decoder
         self.config = config
         self.pretrained_embeddings = np.load(embed_path)["glove"]
         self.model = model
 
         # ==== set up placeholder tokens ========
 
-        self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
-        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.output_size))
-        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
+        self.question_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.config.max_question_length))
+        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.config.output_size))
+        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
+        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(self.config.batch_size, 2))
         self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
             self.setup_system()
-            if model == 'baseline':
+            if model == 'baseline' or model == 'baseline-v2':
                 self.setup_loss()
             else:
                 self.setup_hmn_loss()
@@ -507,16 +505,79 @@ class QASystem(object):
         :return:
         """
 
+
         with tf.variable_scope("q"):
             bilstm_encoded_questions, encoded_question_final_state = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
 
-        with tf.variable_scope("c"):
-            bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
+        with tf.variable_scope("qindep"):
+            bilstm_encoded_questions_reshape = tf.reshape(bilstm_encoded_questions, [-1, self.config.embedding_size])
 
-        coattention_encoding, coattention_encoding_final_states \
-            = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
-        self.start_prediction, self.end_prediction = \
-            self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
+            q_indep_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            q_indep_scores = q_indep_ffnn.forward_prop(bilstm_encoded_questions_reshape, self.dropout_placeholder)
+
+            q_indep_scores = tf.reshape(q_indep_scores, [-1, self.config.max_question_length])
+            q_indep_scores = tf.nn.softmax(q_indep_scores)
+
+            q_indep_repr = tf.reduce_sum(tf.expand_dims(q_indep_scores, -1) * bilstm_encoded_questions, axis=1)
+            q_indep_repr = tf.tile(tf.expand_dims(q_indep_repr, 1), [1, self.config.output_size, 1])
+
+        with tf.variable_scope("qalign"):
+            question_embeddings_reshape = tf.reshape(self.question_embeddings_lookup, [-1, self.config.embedding_size])
+            context_embeddings_reshape = tf.reshape(self.context_embeddings_lookup, [-1, self.config.embedding_size])
+
+            with tf.variable_scope("qscore"):
+                q_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+                q_scores = q_ffnn.forward_prop(question_embeddings_reshape, self.dropout_placeholder)
+                q_scores = tf.expand_dims(tf.reshape(q_scores, [-1, self.config.max_question_length]), -1)
+
+            with tf.variable_scope("cscore"):
+                c_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+                c_scores = c_ffnn.forward_prop(context_embeddings_reshape, self.dropout_placeholder)
+                c_scores = tf.expand_dims(tf.reshape(c_scores, [-1, self.config.output_size]), -1)
+
+            scores = tf.matmul(c_scores, q_scores, transpose_b=True) # question length x context length
+            scores = tf.nn.softmax(scores, 1)
+
+            q_align = tf.expand_dims(self.question_embeddings_lookup, 1) * tf.expand_dims(scores, -1)
+            q_align = tf.reduce_sum(q_align, 2)
+
+        logging.debug(self.context_embeddings_lookup)
+        logging.debug(q_indep_repr)
+        logging.debug(q_align)
+
+        final_encoder = BiLSTMEncoder(3 * self.config.embedding_size)
+        encoder_inputs = tf.concat([self.context_embeddings_lookup, q_indep_repr, q_align], 2)
+
+        states, _ = final_encoder.encode(encoder_inputs, self.context_lengths_placeholder)
+
+        with tf.variable_scope("start"):
+            start_inputs = tf.reshape(states, [-1, 3 * self.config.embedding_size])
+            output_ffnn = FFNN(3 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            start_scores = output_ffnn.forward_prop(start_inputs, self.dropout_placeholder)
+            self.start_prediction = tf.reshape(start_scores, [-1, self.config.output_size])
+
+        with tf.variable_scope("end"):
+            end_inputs = tf.reshape(states, [-1, 3 * self.config.embedding_size])
+            output_ffnn = FFNN(3 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            end_scores = output_ffnn.forward_prop(end_inputs, self.dropout_placeholder)
+            self.end_prediction = tf.reshape(start_scores, [-1, self.config.output_size])
+
+        # spans_list = []
+        #
+        # for idx in xrange(self.config.output_size):
+        #     prefix = tf.tile(tf.expand_dims(states[:,idx,:], 1), [1, self.config.output_size, 1])
+        #     spans_list.append(tf.concat([prefix, states], 2))
+        #
+        # spans = tf.reshape(tf.stack(spans_list, axis=2), [self.config.batch_size, -1, 6 * self.config.embedding_size])
+        #
+        # with tf.variable_scope("decode"):
+        #     spans_reshaped = tf.reshape(spans, [-1, 6 * self.config.embedding_size])
+        #     output_ffnn = FFNN(6 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+        #     span_scores = output_ffnn.forward_prop(spans_reshaped, self.dropout_placeholder)
+        #     span_scores = tf.reshape(span_scores, [self.config.batch_size, self.config.output_size, self.config.output_size])
+        #
+        # self.start_prediction = tf.nn.softmax(tf.reduce_sum(span_scores, axis=2))
+        # self.end_prediction = tf.nn.softmax(tf.reduce_sum(span_scores, axis=1))
 
 
     def setup_loss(self):
@@ -784,8 +845,8 @@ class QASystem(object):
                     logging.info("Saved in %s seconds" % format(toc - tic, '.2f'))
 
                 if (idx + 1) % self.config.after_each_batch == 0 or self.config.test:
-                    _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
-                    logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
+                    # _, _, valid_loss = self.evaluate_answer(session, dataset['val'])
+                    # logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
                         exit(0)

@@ -27,7 +27,7 @@ tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just eval
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
@@ -51,7 +51,7 @@ tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicate
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
- 
+
 FLAGS = tf.app.flags.FLAGS
 
 def initialize_model(session, model, train_dir):
@@ -187,7 +187,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     dataset = zip(zip(questions, contexts), answers)
 
-    return dataset
+    return dataset, max_question_length
 
 
 def main(_):
@@ -195,25 +195,30 @@ def main(_):
     # Mix of pre-fab code and our code
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
+    train, mql = load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_examples=FLAGS.max_examples)
+    val, _ = load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_examples=FLAGS.max_examples)
+
     dataset = {
-        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_examples=FLAGS.max_examples),
-        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_examples=FLAGS.max_examples)
+        'train': train,
+        'val': val
     }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
     vocab_path = FLAGS.vocab_path or pjoin(FLAGS.data_dir, "vocab.dat")
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
+    FLAGS.max_question_length = mql
+
     config = Config(FLAGS)
     if FLAGS.model == 'baseline':
-        encoder = BiLSTMEncoder(FLAGS)
+        encoder = BiLSTMEncoder(FLAGS.embedding_size)
         decoder = Decoder(FLAGS)
     else:
         encoder = LSTMEncoder(FLAGS)
         decoder = HMNDecoder(FLAGS)
     mixer = Mixer(FLAGS)
 
-    qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
+    qa = QASystem(encoder, embed_path, config, FLAGS.model)
 
     if not os.path.exists(FLAGS.log_dir):
         os.makedirs(FLAGS.log_dir)
