@@ -255,7 +255,10 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        USE_DECODER_VERSION = 3
+        if self.config.model == "baseline-v2":
+            USE_DECODER_VERSION = 2
+        else:
+            USE_DECODER_VERSION = 3
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
         if USE_DECODER_VERSION == 3:
@@ -683,8 +686,8 @@ class QASystem(object):
                 f1 += f1_score(prediction_ids, ground_truth_ids)
                 em += exact_match_score(prediction_ids, ground_truth_ids)
 
-        em = 100.0 * em / len(answers_numeric_list)
-        f1 = 100.0 * f1 / len(answers_numeric_list)
+        em = 100.0 * em / sample
+        f1 = 100.0 * f1 / sample
 
         if log:
             logging.info("F1: {}, EM: {}, for {} samples".format(f1, em, sample))
