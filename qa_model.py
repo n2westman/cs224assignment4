@@ -40,6 +40,7 @@ class Config:
     def __init__(self, FLAGS):
         self.test = FLAGS.test
         self.shuffle = FLAGS.shuffle
+        self.evaluate = FLAGS.evaluate
         self.learning_rate = FLAGS.learning_rate
         self.max_gradient_norm = FLAGS.max_gradient_norm
         self.dropout = FLAGS.dropout
@@ -742,6 +743,14 @@ class QASystem(object):
 
         save_path = os.path.join(train_dir, self.model)
 
+        if self.config.evaluate:
+            logging.info("Evaluating current model..")
+            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
+            logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['train']))
+            logging.info("Train loss: %s" % format(valid_loss, '.5f'))
+            exit()
+
         total_parameters = 0
         for variable in tf.trainable_variables():
             shape = variable.get_shape()
@@ -774,4 +783,3 @@ class QASystem(object):
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
                         exit(0)
-
