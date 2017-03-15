@@ -55,8 +55,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
          open(answer_span_file) as answer_spans:
         max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
-            num_examples += 1
-
             # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
@@ -88,6 +86,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             if len(question) > max_question_length:
                 max_question_length = len(question)
 
+            num_examples += 1
             if num_examples >= max_examples:
                 break;
 
