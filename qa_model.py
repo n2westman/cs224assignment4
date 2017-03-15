@@ -271,7 +271,7 @@ class Decoder(object):
             USE_DECODER_VERSION = 2
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
-        
+
         if USE_DECODER_VERSION == 4:
             # Similar to BiDAF paper
             # For start_pred, just use a vector (like V2)
@@ -660,11 +660,11 @@ class QASystem(object):
         """
         input_feed = self.create_feed_dict(valid_x, valid_y)
 
-        output_feed = [self.train_op, self.loss]
+        output_feed = [self.loss]
 
-        _, loss = session.run(output_feed, input_feed)
+        out = session.run(output_feed, input_feed)
 
-        return loss
+        return out[0]
 
     def decode(self, session, test_x):
         """
