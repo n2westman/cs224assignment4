@@ -26,7 +26,7 @@ tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
 tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_float("dropout", 0.85, "Fraction of units randomly kept (!) on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
@@ -34,13 +34,13 @@ tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model."
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
 tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
-tf.app.flags.DEFINE_integer("n_hidden_dec_v3", 200, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_base", 200, "Number of nodes in the hidden layer of decoder V3.")
 tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
 tf.app.flags.DEFINE_integer("max_decode_steps", 4, "Max decode steps for HMN.")
 tf.app.flags.DEFINE_integer("batches_per_save", 100, "Save model after every x batches.")
-tf.app.flags.DEFINE_integer("after_each_batch", 10, "Evaluate model after every x batches.")
+tf.app.flags.DEFINE_integer("after_each_batch", 50, "Evaluate model after every x batches.")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
@@ -205,7 +205,7 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     config = Config(FLAGS)
-    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2':
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
         encoder = BiLSTMEncoder(FLAGS)
         decoder = Decoder(FLAGS)
     else:

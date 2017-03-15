@@ -51,7 +51,7 @@ class Config:
         self.embedding_size = FLAGS.embedding_size
         self.n_hidden_enc = FLAGS.n_hidden_enc
         self.n_hidden_mix = FLAGS.n_hidden_mix
-        self.n_hidden_dec_v3 = FLAGS.n_hidden_dec_v3
+        self.n_hidden_dec_base = FLAGS.n_hidden_dec_base
         self.n_hidden_dec_hmn = FLAGS.n_hidden_dec_hmn
         self.max_examples = FLAGS.max_examples
         self.maxout_size = FLAGS.maxout_size
@@ -210,9 +210,10 @@ class Mixer(object):
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
+        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
 
         with tf.variable_scope("Mixer"):
-            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
+            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
 
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
@@ -255,13 +256,63 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        if self.config.model == "baseline-v2":
-            USE_DECODER_VERSION = 2
-        else:
+        if self.config.model == "baseline-v4":
+            USE_DECODER_VERSION = 4
+        elif self.config.model == "baseline-v3":
             USE_DECODER_VERSION = 3
+        else:
+            USE_DECODER_VERSION = 2
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
-        if USE_DECODER_VERSION == 3:
+        
+        if USE_DECODER_VERSION == 4:
+            # Similar to BiDAF paper
+            # For start_pred, just use a vector (like V2)
+            # For end_pred, adding an additional BiLSTM
+
+            Wnew_shape = (n_hidden_mix, 1)
+            W2new_shape = (n_hidden_mix, 1)
+            #bnew_shape = (1)
+
+            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+
+            initializer = tf.contrib.layers.xavier_initializer()
+
+            with tf.variable_scope("StartPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
+                start_pred = start_pred_tmp2# + bnew
+
+            with tf.variable_scope("EndPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
+                end_pred = end_pred_tmp2# + bnew
+
+        elif USE_DECODER_VERSION == 3:
             # This decoder also uses the full coattention matrix as input
             # It then takes a matrix coattention column (corresponding to a single context word)
             # And throws it into a simple FFNN
@@ -269,12 +320,12 @@ class Decoder(object):
             output_size = 1
 
             with tf.variable_scope("StartPredictor"):
-                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
+                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
                 start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 start_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
             with tf.variable_scope("EndPredictor"):
-                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
+                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
                 end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
@@ -308,7 +359,7 @@ class Decoder(object):
         else:
             # This uses only the final hidden layer from the coattention matrix,
             # and feeds it into a simple neural net
-            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec, self.config.output_size)
+            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec_base, self.config.output_size)
 
             with tf.variable_scope("StartPredictor"):
                 start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
@@ -453,7 +504,7 @@ class QASystem(object):
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
             self.setup_system()
-            if model == 'baseline' or model == 'baseline-v2':
+            if model == 'baseline' or model == 'baseline-v2' or model == 'baseline-v3' or model == 'baseline-v4':
                 self.setup_loss()
             else:
                 self.setup_hmn_loss()
@@ -753,7 +804,7 @@ class QASystem(object):
             logging.info("Evaluating current model..")
             _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
             logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
-            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['train']))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
             logging.info("Train loss: %s" % format(valid_loss, '.5f'))
             exit()
 
@@ -788,4 +839,9 @@ class QASystem(object):
                     logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
-                        exit(0)
+
+            logging.info("Evaluating current model..")
+            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
+            logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
+            logging.info("Train loss: %s" % format(valid_loss, '.5f'))
