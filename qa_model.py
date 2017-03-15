@@ -18,6 +18,13 @@ from contrib_ops import highway_maxout, batch_linear
 
 logging.basicConfig(level=logging.INFO)
 
+def lengths_to_masks(lengths, max_length):
+  tiled_ranges = tf.tile(
+      tf.expand_dims(tf.range(max_length), 0), [tf.shape(lengths)[0], 1])
+  lengths = tf.expand_dims(lengths, 1)
+  masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
+  return masks
+
 def get_optimizer(opt):
     if opt == "adam":
         optfn = tf.train.AdamOptimizer
@@ -520,15 +527,24 @@ class QASystem(object):
 
 
     def setup_loss(self):
-        # jorisvanmens: calculates loss for the neural net decoder (code by Joris)
-        # jorisvanmens: this is not tested at all (like most parts of the code really, haha)
         """
         Set up your loss computation here
         :return:
         """
-        sm_ce_loss_answer_start = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answers_numeric_list[:, 0])
-        sm_ce_loss_answer_end = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answers_numeric_list[:, 1])
-        self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
+
+        lengths = tf.reshape(self.context_lengths_placeholder, [-1])
+        mask = lengths_to_masks(lengths, self.config.output_size)
+
+        masked_start_preds = mask * self.start_prediction
+        masked_end_preds = mask * self.end_prediction
+
+        sparse_start_labels = self.answers_numeric_list[:, 0]
+        sparse_end_labels = self.answers_numeric_list[:, 1]
+
+        start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
+        end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
+
+        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss)
 
     def setup_hmn_loss(self):
         # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
