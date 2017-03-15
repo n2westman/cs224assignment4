@@ -10,7 +10,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from data_utils import shuffle_and_open_dataset
+from data_utils import shuffle_and_open_dataset, split_in_batches
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
@@ -528,32 +528,6 @@ class QASystem(object):
         # ==== set up training/updating procedure ====
         self.saver = tf.train.Saver()
 
-    def split_in_batches(self, questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
-        batches = []
-        for start_index in range(0, len(questions), batch_size):
-            batch_x = {
-                'questions': questions[start_index:start_index + batch_size],
-                'question_lengths': question_lengths[start_index:start_index + batch_size],
-                'contexts': contexts[start_index:start_index + batch_size],
-                'context_lengths': context_lengths[start_index:start_index + batch_size],
-            }
-            if answers is not None:
-                batch_y = answers[start_index:start_index + batch_size]
-                batches.append((batch_x, batch_y))
-            elif question_uuids is not None:
-                batch_uuids = question_uuids[start_index:start_index + batch_size]
-                batches.append((batch_x, batch_uuids))
-            else:
-                raise ValueError("Neither answers nor question uuids were provided")
-
-        logging.debug("Expected batch_size: %s" % batch_size)
-        logging.debug("Actual batch_size: %s" % len(batches[0][1]))
-        if len(questions) > batch_size:
-            assert (batch_size == len(batches[0][1]))
-
-        logging.info("Created %d batches" % len(batches))
-        return batches
-
 
     def setup_system(self):
         # jorisvanmens: sets up parts of the graph (code by Ilya & Joris)
@@ -731,7 +705,7 @@ class QASystem(object):
         dataset = dataset[:sample]
 
         questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset, shuffle=self.config.shuffle)
-        data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
+        data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
             logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
@@ -833,7 +807,7 @@ class QASystem(object):
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
             questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset['train'], shuffle=self.config.shuffle)
-            data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
+            data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)

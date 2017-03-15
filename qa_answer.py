@@ -14,6 +14,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
+from data_utils import split_in_batches
 from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
@@ -155,7 +156,7 @@ def generate_answers(sess, model, dataset, rev_vocab):
     question_lengths = [len(x) for x in questions]
     context_lengths = [len(x) for x in contexts]
 
-    batches = model.split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
+    batches = split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
 
     for batch_x, batch_uuids in batches:
         counter += 1

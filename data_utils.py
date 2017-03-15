@@ -103,3 +103,29 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     logging.debug("Max context length: %s" % max_context_length)
 
     return dataset
+
+def split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
+    batches = []
+    for start_index in range(0, len(questions), batch_size):
+        batch_x = {
+            'questions': questions[start_index:start_index + batch_size],
+            'question_lengths': question_lengths[start_index:start_index + batch_size],
+            'contexts': contexts[start_index:start_index + batch_size],
+            'context_lengths': context_lengths[start_index:start_index + batch_size],
+        }
+        if answers is not None:
+            batch_y = answers[start_index:start_index + batch_size]
+            batches.append((batch_x, batch_y))
+        elif question_uuids is not None:
+            batch_uuids = question_uuids[start_index:start_index + batch_size]
+            batches.append((batch_x, batch_uuids))
+        else:
+            raise ValueError("Neither answers nor question uuids were provided")
+
+    logging.debug("Expected batch_size: %s" % batch_size)
+    logging.debug("Actual batch_size: %s" % len(batches[0][1]))
+    if len(questions) > batch_size:
+        assert (batch_size == len(batches[0][1]))
+
+    logging.info("Created %d batches" % len(batches))
+    return batches
