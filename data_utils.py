@@ -105,9 +105,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     return dataset
 
 def split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
-    """
-    Splits a dataset into batches, each of batch_size.
-    """
     batches = []
     for start_index in range(0, len(questions), batch_size):
         batch_x = {

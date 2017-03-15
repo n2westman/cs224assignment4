@@ -1,7 +1,7 @@
 import tensorflow as tf
 import logging
 
-from data_utils import load_and_preprocess_dataset, shuffle_and_open_dataset, split_in_batches
+from data_utils import load_and_preprocess_dataset, shuffle_and_open_dataset
 from qa_data import PAD_ID
 
 logging.disable(logging.INFO)
@@ -35,19 +35,6 @@ class DataUtilsTest(tf.test.TestCase):
             for val in context[length:]:
                 assert int(val) == PAD_ID
 
-    def test_split_in_batches(self):
-        dataset = load_and_preprocess_dataset(TEST_DATA_PATH, TEST_DATA_FILE, 10, 4)
-        dataset = dataset * 10 # artificially increase dataset size
-
-        num_data_points = len(dataset) # 40
-        batch_size = 9
-        num_batches = 5
-
-        questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset, shuffle=False)
-
-        batches = split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=answers)
-
-        assert len(batches) == num_batches
 
 if __name__ == '__main__':
   tf.test.main()
