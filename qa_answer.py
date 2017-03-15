@@ -150,7 +150,11 @@ def generate_answers(sess, model, dataset, rev_vocab):
 
     contexts, questions, question_uuids = dataset
     counter = 0
-    batches = model.split_in_batches(questions, contexts, FLAGS.batch_size, question_uuids=question_uuids)
+
+    question_lengths = [len(x) for x in questions]
+    context_lengths = [len(x) for x in contexts]
+
+    batches = model.split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
 
     for batch_x, batch_uuids in batches:
         counter += 1

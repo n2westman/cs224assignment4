@@ -474,18 +474,18 @@ class QASystem(object):
             random.shuffle(dataset)
 
         inputs, answers = zip(*dataset)
-        questions, contexts = zip(*inputs)
+        questions, question_lengths, contexts, context_lengths = zip(*inputs)
 
-        return questions, contexts, answers
+        return questions, question_lengths, contexts, context_lengths, answers
 
-    def split_in_batches(self, questions, contexts, batch_size, answers=None, question_uuids=None):
+    def split_in_batches(self, questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
         batches = []
         for start_index in range(0, len(questions), batch_size):
             batch_x = {
                 'questions': questions[start_index:start_index + batch_size],
-                'question_lengths': map(len, questions[start_index:start_index + batch_size]),
+                'question_lengths': question_lengths[start_index:start_index + batch_size],
                 'contexts': contexts[start_index:start_index + batch_size],
-                'context_lengths': map(len, contexts[start_index:start_index + batch_size]),
+                'context_lengths': context_lengths[start_index:start_index + batch_size],
             }
             if answers is not None:
                 batch_y = answers[start_index:start_index + batch_size]
@@ -681,8 +681,8 @@ class QASystem(object):
         # cap number of samples
         dataset = dataset[:sample]
 
-        questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
-        data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+        questions, question_lengths, contexts, context_lengths, answers = self.shuffle_and_open_dataset(dataset)
+        data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
             logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
@@ -783,8 +783,8 @@ class QASystem(object):
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
-            questions, contexts, answers = self.shuffle_and_open_dataset(dataset['train'])
-            data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+            questions, question_lengths, contexts, context_lengths, answers = self.shuffle_and_open_dataset(dataset['train'])
+            data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
