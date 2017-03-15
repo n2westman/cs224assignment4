@@ -51,7 +51,7 @@ tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicate
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
- 
+
 FLAGS = tf.app.flags.FLAGS
 
 def initialize_model(session, model, train_dir):
@@ -120,7 +120,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     # Definition of the dataset -- note definition appears in multiple places
     questions = []
+    question_lengths = []
     contexts = []
+    context_lengths = []
     answers = []
 
     # Parameters
@@ -162,7 +164,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
             # Add datum to dataset
             questions.append(question)
+            question_lengths.append(len(question))
             contexts.append(context)
+            context_lengths.append(len(context))
             answers.append(answer)
 
             # Track max question & context lengths for adding padding later on
@@ -185,7 +189,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     logging.info("Dataset loaded with %s samples" % num_examples)
 
-    dataset = zip(zip(questions, contexts), answers)
+    dataset = zip(zip(questions, question_lengths, contexts, context_lengths), answers)
 
     return dataset
 

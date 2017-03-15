@@ -18,6 +18,13 @@ from contrib_ops import highway_maxout, batch_linear
 
 logging.basicConfig(level=logging.INFO)
 
+def lengths_to_masks(lengths, max_length):
+  tiled_ranges = tf.tile(
+      tf.expand_dims(tf.range(max_length), 0), [tf.shape(lengths)[0], 1])
+  lengths = tf.expand_dims(lengths, 1)
+  masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
+  return masks
+
 def get_optimizer(opt):
     if opt == "adam":
         optfn = tf.train.AdamOptimizer
@@ -518,18 +525,18 @@ class QASystem(object):
             random.shuffle(dataset)
 
         inputs, answers = zip(*dataset)
-        questions, contexts = zip(*inputs)
+        questions, question_lengths, contexts, context_lengths = zip(*inputs)
 
-        return questions, contexts, answers
+        return questions, question_lengths, contexts, context_lengths, answers
 
-    def split_in_batches(self, questions, contexts, batch_size, answers=None, question_uuids=None):
+    def split_in_batches(self, questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
         batches = []
         for start_index in range(0, len(questions), batch_size):
             batch_x = {
                 'questions': questions[start_index:start_index + batch_size],
-                'question_lengths': map(len, questions[start_index:start_index + batch_size]),
+                'question_lengths': question_lengths[start_index:start_index + batch_size],
                 'contexts': contexts[start_index:start_index + batch_size],
-                'context_lengths': map(len, contexts[start_index:start_index + batch_size]),
+                'context_lengths': context_lengths[start_index:start_index + batch_size],
             }
             if answers is not None:
                 batch_y = answers[start_index:start_index + batch_size]
@@ -571,15 +578,24 @@ class QASystem(object):
 
 
     def setup_loss(self):
-        # jorisvanmens: calculates loss for the neural net decoder (code by Joris)
-        # jorisvanmens: this is not tested at all (like most parts of the code really, haha)
         """
         Set up your loss computation here
         :return:
         """
-        sm_ce_loss_answer_start = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answers_numeric_list[:, 0])
-        sm_ce_loss_answer_end = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answers_numeric_list[:, 1])
-        self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
+
+        lengths = tf.reshape(self.context_lengths_placeholder, [-1])
+        mask = lengths_to_masks(lengths, self.config.output_size)
+
+        masked_start_preds = mask * self.start_prediction
+        masked_end_preds = mask * self.end_prediction
+
+        sparse_start_labels = self.answers_numeric_list[:, 0]
+        sparse_end_labels = self.answers_numeric_list[:, 1]
+
+        start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
+        end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
+
+        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss)
 
     def setup_hmn_loss(self):
         # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
@@ -716,8 +732,8 @@ class QASystem(object):
         # cap number of samples
         dataset = dataset[:sample]
 
-        questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
-        data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+        questions, question_lengths, contexts, context_lengths, answers = self.shuffle_and_open_dataset(dataset)
+        data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
             logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
@@ -818,8 +834,8 @@ class QASystem(object):
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
-            questions, contexts, answers = self.shuffle_and_open_dataset(dataset['train'])
-            data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+            questions, question_lengths, contexts, context_lengths, answers = self.shuffle_and_open_dataset(dataset['train'])
+            data_batches = self.split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
