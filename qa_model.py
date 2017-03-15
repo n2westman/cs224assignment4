@@ -20,11 +20,17 @@ from contrib_ops import highway_maxout, batch_linear
 logging.basicConfig(level=logging.INFO)
 
 def lengths_to_masks(lengths, max_length):
-  tiled_ranges = tf.tile(
-      tf.expand_dims(tf.range(max_length), 0), [tf.shape(lengths)[0], 1])
-  lengths = tf.expand_dims(lengths, 1)
-  masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
-  return masks
+    """
+    arguments: lengths: a lengths placeholder of (batch_size,)
+               max_length: maximum token lengths
+    returns:   masks: A masking matrix of size (batch_size, max_length)
+    """
+    lengths = tf.reshape(lengths, [-1])
+    tiled_ranges = tf.tile(
+        tf.expand_dims(tf.range(max_length), 0), [tf.shape(lengths)[0], 1])
+    lengths = tf.expand_dims(lengths, 1)
+    masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
+    return masks
 
 def get_optimizer(opt):
     if opt == "adam":
@@ -576,8 +582,7 @@ class QASystem(object):
         :return:
         """
 
-        lengths = tf.reshape(self.context_lengths_placeholder, [-1])
-        mask = lengths_to_masks(lengths, self.config.output_size)
+        mask = lengths_to_masks(self.context_lengths_placeholder, self.config.output_size)
 
         masked_start_preds = mask * self.start_prediction
         masked_end_preds = mask * self.end_prediction
