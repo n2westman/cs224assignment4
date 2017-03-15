@@ -10,6 +10,7 @@ import fileinput
 import tensorflow as tf
 import numpy as np
 
+from data_utils import load_and_preprocess_dataset
 from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
@@ -26,7 +27,7 @@ tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
 tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_float("dropout", 0.7, "Fraction of units randomly dropped on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
@@ -34,13 +35,13 @@ tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model."
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
 tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
-tf.app.flags.DEFINE_integer("n_hidden_dec_v3", 200, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_base", 200, "Number of nodes in the hidden layer of decoder V3.")
 tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
 tf.app.flags.DEFINE_integer("max_decode_steps", 4, "Max decode steps for HMN.")
 tf.app.flags.DEFINE_integer("batches_per_save", 100, "Save model after every x batches.")
-tf.app.flags.DEFINE_integer("after_each_batch", 10, "Evaluate model after every x batches.")
+tf.app.flags.DEFINE_integer("after_each_batch", 50, "Evaluate model after every x batches.")
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
@@ -96,100 +97,6 @@ def get_normalized_train_dir(train_dir):
     os.symlink(os.path.abspath(train_dir), global_train_dir)
     return global_train_dir
 
-
-def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
-    """
-    Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
-    Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
-
-    TODO: could store pre-processed data in standard Tensorflow format:
-    https://www.tensorflow.org/programmers_guide/reading_data#standard_tensorflow_format
-    (not sure if beneficial, given loading and preprocessing is fast)
-
-    :return: A list of (inputs, labels) tuples, where inputs are (q, c)
-    """
-
-    logging.info("Loading dataset: %s " % dataset)
-    context_ids_file = os.path.join(path, dataset + ".ids.context")
-    question_ids_file = os.path.join(path, dataset + ".ids.question")
-    answer_span_file = os.path.join(path, dataset + ".span")
-
-    assert os.path.exists(context_ids_file)
-    assert os.path.exists(question_ids_file)
-    assert os.path.exists(answer_span_file)
-
-    # Definition of the dataset -- note definition appears in multiple places
-    questions = []
-    contexts = []
-    answers = []
-
-    # Parameters
-    ADD_PADDING = True # Add padding to make all questions and contexts the same length
-    FIXED_CONTEXT_SIZE = True # Remove contexts longer than context_size (I don't think this can be turned off anymore)
-    context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
-    min_input_length = 3 # Remove questions & contexts smaller than this
-    num_examples = 0
-
-    with open(context_ids_file) as context_ids, \
-         open(question_ids_file) as question_ids, \
-         open(answer_span_file) as answer_spans:
-        max_context_length = 0
-        max_question_length = 0
-        for context, question, answer in izip(context_ids, question_ids, answer_spans):
-            num_examples += 1
-
-            # Load raw context, question, answer from file
-            context = context.split()
-            question = question.split()
-            answer = answer.split()
-
-            # Don't use Qs / contexts that are too short
-            if len(context) < min_input_length or len(question) < min_input_length:
-                continue
-
-            # Don't use malformed answers
-            if int(answer[0]) > int(answer[1]):
-                continue
-
-            # Don't use answers that end after max_context
-            if int(answer[1]) > (FLAGS.output_size - 1):
-                continue
-
-            # Trim context variables
-            if FIXED_CONTEXT_SIZE:
-                max_context_length = context_size
-                del context[max_context_length:]
-
-            # Add datum to dataset
-            questions.append(question)
-            contexts.append(context)
-            answers.append(answer)
-
-            # Track max question & context lengths for adding padding later on
-            if ADD_PADDING:
-                if len(question) > max_question_length:
-                    max_question_length = len(question)
-                if not FIXED_CONTEXT_SIZE:
-                    if len(context) > max_context_length:
-                        max_context_length = len(context)
-
-            if num_examples >= max_examples:
-                break;
-
-    # Add padding
-    if ADD_PADDING:
-        for question in questions:
-            question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-        for context in contexts:
-            context.extend([str(PAD_ID)] * (max_context_length - len(context)))
-
-    logging.info("Dataset loaded with %s samples" % num_examples)
-
-    dataset = zip(zip(questions, contexts), answers)
-
-    return dataset, max_question_length
-
-
 def main(_):
 
     # Mix of pre-fab code and our code
@@ -210,13 +117,13 @@ def main(_):
     FLAGS.max_question_length = mql
 
     config = Config(FLAGS)
-    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2':
-        encoder = BiLSTMEncoder(FLAGS)
-        decoder = Decoder(FLAGS)
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
+        encoder = BiLSTMEncoder(config)
+        decoder = Decoder(config)
     else:
-        encoder = LSTMEncoder(FLAGS)
-        decoder = HMNDecoder(FLAGS)
-    mixer = Mixer(FLAGS)
+        encoder = LSTMEncoder(config)
+        decoder = HMNDecoder(config)
+    mixer = Mixer(config)
 
     qa = QASystem(encoder, embed_path, config, FLAGS.model)
 

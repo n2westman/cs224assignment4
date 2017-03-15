@@ -14,7 +14,8 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from data_utils import split_in_batches
+from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
 import qa_data
@@ -27,9 +28,10 @@ FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
 tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
+tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
-tf.app.flags.DEFINE_float("dropout", 0.15, "Fraction of units randomly dropped on non-recurrent connections.")
+tf.app.flags.DEFINE_float("dropout", 1.0, "Fraction of units randomly kept (!) on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 200, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
@@ -37,7 +39,7 @@ tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model."
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
 tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
 tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
-tf.app.flags.DEFINE_integer("n_hidden_dec_v3", 20, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_base", 200, "Number of nodes in the hidden layer of decoder V3.")
 tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
@@ -53,7 +55,7 @@ tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per pri
 tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
-tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline).")
+tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
 
 def initialize_model(session, model, train_dir):
@@ -150,7 +152,11 @@ def generate_answers(sess, model, dataset, rev_vocab):
 
     contexts, questions, question_uuids = dataset
     counter = 0
-    batches = model.split_in_batches(questions, contexts, FLAGS.batch_size, question_uuids=question_uuids)
+
+    question_lengths = [len(x) for x in questions]
+    context_lengths = [len(x) for x in contexts]
+
+    batches = split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
 
     for batch_x, batch_uuids in batches:
         counter += 1
@@ -225,9 +231,13 @@ def main(_):
     # You must change the following code to adjust to your model
 
     config = Config(FLAGS)
-    encoder = Encoder(FLAGS)
-    decoder = Decoder(FLAGS)
-    mixer = Mixer(FLAGS)
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
+        encoder = BiLSTMEncoder(config)
+        decoder = Decoder(config)
+    else:
+        encoder = LSTMEncoder(config)
+        decoder = HMNDecoder(config)
+    mixer = Mixer(config)
 
     qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 

@@ -10,6 +10,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
+from data_utils import shuffle_and_open_dataset, split_in_batches
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
@@ -17,6 +18,19 @@ from evaluate import exact_match_score, f1_score
 from contrib_ops import highway_maxout, batch_linear
 
 logging.basicConfig(level=logging.INFO)
+
+def lengths_to_masks(lengths, max_length):
+    """
+    arguments: lengths: a lengths placeholder of (batch_size,)
+               max_length: maximum token lengths
+    returns:   masks: A masking matrix of size (batch_size, max_length)
+    """
+    lengths = tf.reshape(lengths, [-1])
+    tiled_ranges = tf.tile(
+        tf.expand_dims(tf.range(max_length), 0), [tf.shape(lengths)[0], 1])
+    lengths = tf.expand_dims(lengths, 1)
+    masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
+    return masks
 
 def get_optimizer(opt):
     if opt == "adam":
@@ -50,7 +64,7 @@ class Config:
         self.output_size = FLAGS.output_size
         self.embedding_size = FLAGS.embedding_size
         self.n_hidden_mix = FLAGS.n_hidden_mix
-        self.n_hidden_dec_v3 = FLAGS.n_hidden_dec_v3
+        self.n_hidden_dec_base = FLAGS.n_hidden_dec_base
         self.n_hidden_dec_hmn = FLAGS.n_hidden_dec_hmn
         self.max_examples = FLAGS.max_examples
         self.max_question_length = FLAGS.max_question_length
@@ -71,8 +85,8 @@ class Config:
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, input_size):
-        self.input_size = input_size
+    def __init__(self, config):
+        self.config = config
 
 
     def encode(self, embeddings, sequence_length, initial_state=None):
@@ -99,11 +113,12 @@ class BiLSTMEncoder(object):
             initial_state_bw = None
 
         with tf.variable_scope("Encoder"):
-            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.input_size, forget_bias=1.0)
-            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.input_size, forget_bias=1.0)
+            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
             (hidden_state_fw, hidden_state_bw), final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
-                                                      embeddings,
+                                                      embeddings_drop,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
@@ -111,8 +126,8 @@ class BiLSTMEncoder(object):
         return hidden_state_fw + hidden_state_bw, final_state
 
 class LSTMEncoder(object):
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -171,8 +186,8 @@ class FFNN(object):
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
-    def __init__(self, FLAGS):
-            self.config = Config(FLAGS)
+    def __init__(self, config):
+            self.config = config
 
     def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
@@ -210,9 +225,10 @@ class Mixer(object):
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
+        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
 
         with tf.variable_scope("Mixer"):
-            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d, sequence_length=context_lengths, dtype=tf.float32)
+            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
 
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
@@ -221,8 +237,8 @@ class Mixer(object):
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
 
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
         """
@@ -255,13 +271,63 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        if self.config.model == "baseline-v2":
-            USE_DECODER_VERSION = 2
-        else:
+        if self.config.model == "baseline-v4":
+            USE_DECODER_VERSION = 4
+        elif self.config.model == "baseline-v3":
             USE_DECODER_VERSION = 3
+        else:
+            USE_DECODER_VERSION = 2
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
-        if USE_DECODER_VERSION == 3:
+
+        if USE_DECODER_VERSION == 4:
+            # Similar to BiDAF paper
+            # For start_pred, just use a vector (like V2)
+            # For end_pred, adding an additional BiLSTM
+
+            Wnew_shape = (n_hidden_mix, 1)
+            W2new_shape = (n_hidden_mix, 1)
+            #bnew_shape = (1)
+
+            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+
+            initializer = tf.contrib.layers.xavier_initializer()
+
+            with tf.variable_scope("StartPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
+                start_pred = start_pred_tmp2# + bnew
+
+            with tf.variable_scope("EndPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
+                end_pred = end_pred_tmp2# + bnew
+
+        elif USE_DECODER_VERSION == 3:
             # This decoder also uses the full coattention matrix as input
             # It then takes a matrix coattention column (corresponding to a single context word)
             # And throws it into a simple FFNN
@@ -269,12 +335,12 @@ class Decoder(object):
             output_size = 1
 
             with tf.variable_scope("StartPredictor"):
-                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
+                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
                 start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 start_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
             with tf.variable_scope("EndPredictor"):
-                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_v3)
+                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
                 end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
                 end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
@@ -308,7 +374,7 @@ class Decoder(object):
         else:
             # This uses only the final hidden layer from the coattention matrix,
             # and feeds it into a simple neural net
-            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec, self.config.output_size)
+            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec_base, self.config.output_size)
 
             with tf.variable_scope("StartPredictor"):
                 start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
@@ -321,8 +387,8 @@ class Decoder(object):
 class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
         """
@@ -451,7 +517,7 @@ class QASystem(object):
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
             self.setup_system()
-            if model == 'baseline' or model == 'baseline-v2':
+            if model == 'baseline' or model == 'baseline-v2' or model == 'baseline-v3' or model == 'baseline-v4':
                 self.setup_loss()
             else:
                 self.setup_hmn_loss()
@@ -459,41 +525,6 @@ class QASystem(object):
 
         # ==== set up training/updating procedure ====
         self.saver = tf.train.Saver()
-
-    def shuffle_and_open_dataset(self, dataset):
-        if self.config.shuffle:
-            random.shuffle(dataset)
-
-        inputs, answers = zip(*dataset)
-        questions, contexts = zip(*inputs)
-
-        return questions, contexts, answers
-
-    def split_in_batches(self, questions, contexts, batch_size, answers=None, question_uuids=None):
-        batches = []
-        for start_index in range(0, len(questions), batch_size):
-            batch_x = {
-                'questions': questions[start_index:start_index + batch_size],
-                'question_lengths': map(len, questions[start_index:start_index + batch_size]),
-                'contexts': contexts[start_index:start_index + batch_size],
-                'context_lengths': map(len, contexts[start_index:start_index + batch_size]),
-            }
-            if answers is not None:
-                batch_y = answers[start_index:start_index + batch_size]
-                batches.append((batch_x, batch_y))
-            elif question_uuids is not None:
-                batch_uuids = question_uuids[start_index:start_index + batch_size]
-                batches.append((batch_x, batch_uuids))
-            else:
-                raise ValueError("Neither answers nor question uuids were provided")
-
-        logging.debug("Expected batch_size: %s" % batch_size)
-        logging.debug("Actual batch_size: %s" % len(batches[0][1]))
-        if len(questions) > batch_size:
-            assert (batch_size == len(batches[0][1]))
-
-        logging.info("Created %d batches" % len(batches))
-        return batches
 
 
     def setup_system(self):
@@ -581,15 +612,23 @@ class QASystem(object):
 
 
     def setup_loss(self):
-        # jorisvanmens: calculates loss for the neural net decoder (code by Joris)
-        # jorisvanmens: this is not tested at all (like most parts of the code really, haha)
         """
         Set up your loss computation here
         :return:
         """
-        sm_ce_loss_answer_start = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.start_prediction, labels = self.answers_numeric_list[:, 0])
-        sm_ce_loss_answer_end = tf.nn.sparse_softmax_cross_entropy_with_logits(logits = self.end_prediction, labels = self.answers_numeric_list[:, 1])
-        self.loss = tf.reduce_mean(sm_ce_loss_answer_start) + tf.reduce_mean(sm_ce_loss_answer_end)
+
+        mask = lengths_to_masks(self.context_lengths_placeholder, self.config.output_size)
+
+        masked_start_preds = mask * self.start_prediction
+        masked_end_preds = mask * self.end_prediction
+
+        sparse_start_labels = self.answers_numeric_list[:, 0]
+        sparse_end_labels = self.answers_numeric_list[:, 1]
+
+        start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
+        end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
+
+        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss)
 
     def setup_hmn_loss(self):
         # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
@@ -654,11 +693,11 @@ class QASystem(object):
         """
         input_feed = self.create_feed_dict(valid_x, valid_y)
 
-        output_feed = [self.train_op, self.loss]
+        output_feed = [self.loss]
 
-        _, loss = session.run(output_feed, input_feed)
+        out = session.run(output_feed, input_feed)
 
-        return loss
+        return out[0]
 
     def decode(self, session, test_x):
         """
@@ -726,8 +765,8 @@ class QASystem(object):
         # cap number of samples
         dataset = dataset[:sample]
 
-        questions, contexts, answers = self.shuffle_and_open_dataset(dataset)
-        data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+        questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset, shuffle=self.config.shuffle)
+        data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
             logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
@@ -814,7 +853,7 @@ class QASystem(object):
             logging.info("Evaluating current model..")
             _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
             logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
-            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['train']))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
             logging.info("Train loss: %s" % format(valid_loss, '.5f'))
             exit()
 
@@ -828,8 +867,8 @@ class QASystem(object):
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
-            questions, contexts, answers = self.shuffle_and_open_dataset(dataset['train'])
-            data_batches = self.split_in_batches(questions, contexts, self.config.batch_size, answers=answers)
+            questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset['train'], shuffle=self.config.shuffle)
+            data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
@@ -849,4 +888,9 @@ class QASystem(object):
                     # logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
-                        exit(0)
+
+            logging.info("Evaluating current model..")
+            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
+            logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
+            logging.info("Train loss: %s" % format(valid_loss, '.5f'))
