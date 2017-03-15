@@ -1,12 +1,22 @@
 import os
 import sys
 import logging
+import random
 
 from os.path import join as pjoin
 from itertools import izip
 from qa_data import PAD_ID
 
 logging.basicConfig(level=logging.INFO)
+
+def shuffle_and_open_dataset(dataset, shuffle=True):
+    if shuffle:
+        random.shuffle(dataset)
+
+    inputs, answers = zip(*dataset)
+    questions, question_lengths, contexts, context_lengths = zip(*inputs)
+
+    return questions, question_lengths, contexts, context_lengths, answers
 
 def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
     """
@@ -37,9 +47,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     answers = []
 
     # Parameters
-    ADD_PADDING = True # Add padding to make all questions and contexts the same length
-    FIXED_CONTEXT_SIZE = True # Remove contexts longer than context_size (I don't think this can be turned off anymore)
-    context_size = max_context_length # Only relevant for FIXED_CONTEXT_SIZE
     min_input_length = 3 # Remove questions & contexts smaller than this
     num_examples = 0
 
@@ -68,9 +75,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
                 continue
 
             # Trim context variables
-            if FIXED_CONTEXT_SIZE:
-                max_context_length = context_size
-                del context[max_context_length:]
+            context = context[:max_context_length]
 
             # Add datum to dataset
             questions.append(question)
@@ -80,25 +85,22 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             answers.append(answer)
 
             # Track max question & context lengths for adding padding later on
-            if ADD_PADDING:
-                if len(question) > max_question_length:
-                    max_question_length = len(question)
-                if not FIXED_CONTEXT_SIZE:
-                    if len(context) > max_context_length:
-                        max_context_length = len(context)
+            if len(question) > max_question_length:
+                max_question_length = len(question)
 
             if num_examples >= max_examples:
                 break;
 
     # Add padding
-    if ADD_PADDING:
-        for question in questions:
-            question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-        for context in contexts:
-            context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+    for question in questions:
+        question.extend([str(PAD_ID)] * (max_question_length - len(question)))
+    for context in contexts:
+        context.extend([str(PAD_ID)] * (max_context_length - len(context)))
 
     dataset = zip(zip(questions, question_lengths, contexts, context_lengths), answers)
 
     logging.info("Dataset loaded with %s samples" % len(dataset))
+    logging.debug("Max question length: %s" % max_question_length)
+    logging.debug("Max context length: %s" % max_context_length)
 
     return dataset
