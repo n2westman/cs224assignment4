@@ -79,8 +79,8 @@ class Config:
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
 
     def encode(self, embeddings, sequence_length, initial_state=None):
@@ -120,8 +120,8 @@ class BiLSTMEncoder(object):
         return tf.concat(hidden_state, 2), final_state
 
 class LSTMEncoder(object):
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def encode(self, embeddings, sequence_length, initial_state=None):
         """
@@ -180,8 +180,8 @@ class FFNN(object):
 class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
-    def __init__(self, FLAGS):
-            self.config = Config(FLAGS)
+    def __init__(self, config):
+            self.config = config
 
     def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
@@ -231,8 +231,8 @@ class Mixer(object):
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
 
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
         """
@@ -381,8 +381,8 @@ class Decoder(object):
 class HMNDecoder(object):
     # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
     # based on co-attention paper
-    def __init__(self, FLAGS):
-        self.config = Config(FLAGS)
+    def __init__(self, config):
+        self.config = config
 
     def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
         """

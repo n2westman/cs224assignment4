@@ -114,12 +114,12 @@ def main(_):
 
     config = Config(FLAGS)
     if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
-        encoder = BiLSTMEncoder(FLAGS)
-        decoder = Decoder(FLAGS)
+        encoder = BiLSTMEncoder(config)
+        decoder = Decoder(config)
     else:
-        encoder = LSTMEncoder(FLAGS)
-        decoder = HMNDecoder(FLAGS)
-    mixer = Mixer(FLAGS)
+        encoder = LSTMEncoder(config)
+        decoder = HMNDecoder(config)
+    mixer = Mixer(config)
 
     qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 
