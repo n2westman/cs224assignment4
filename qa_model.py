@@ -108,9 +108,10 @@ class BiLSTMEncoder(object):
         with tf.variable_scope("Encoder"):
             lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
             lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
             hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
-                                                      embeddings,
+                                                      embeddings_drop,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
