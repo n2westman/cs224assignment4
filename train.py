@@ -210,8 +210,8 @@ def main(_):
     FLAGS.max_question_length = mql
 
     config = Config(FLAGS)
-    if FLAGS.model == 'baseline':
-        encoder = BiLSTMEncoder(FLAGS.embedding_size)
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2':
+        encoder = BiLSTMEncoder(FLAGS)
         decoder = Decoder(FLAGS)
     else:
         encoder = LSTMEncoder(FLAGS)
