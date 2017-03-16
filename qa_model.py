@@ -171,18 +171,18 @@ class FFNN(object):
         """
         initializer = tf.contrib.layers.xavier_initializer()
 
-        W1 = tf.get_variable('W1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
-        b1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
-        W2 = tf.get_variable('W2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
+        weights1 = tf.get_variable('weights1', shape=(self.input_size, self.hidden_size), initializer=initializer, dtype=tf.float32)
+        biases1 = tf.Variable(tf.zeros((1, self.hidden_size), tf.float32))
+        weights2 = tf.get_variable('weights2', shape=(self.hidden_size, self.output_size), initializer=initializer, dtype=tf.float32)
         if self.output_size > 1: # don't need bias if output_size == 1
-            b2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
+            biases2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
 
-        h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
+        h = tf.nn.relu(tf.matmul(inputs, weights1) + biases1) # samples x n_hidden_dec
         h_drop = tf.nn.dropout(h, dropout_placeholder)
         if self.output_size > 1:
-            output = tf.matmul(h_drop, W2) + b2
+            output = tf.matmul(h_drop, weights2) + biases2
         else:
-            output = tf.matmul(h_drop, W2) # don't need bias if output_size == 1
+            output = tf.matmul(h_drop, weights2) # don't need bias if output_size == 1
         return output # samples x context_words
 
 class Mixer(object):
@@ -280,8 +280,7 @@ class Decoder(object):
             # For start_pred, just use a vector (like V2)
             # For end_pred, adding an additional BiLSTM
 
-            Wnew_shape = (n_hidden_mix, 1)
-            W2new_shape = (n_hidden_mix, 1)
+            weights_shape = (n_hidden_mix, 1)
             #bnew_shape = (1)
 
             Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
@@ -290,19 +289,19 @@ class Decoder(object):
 
             with tf.variable_scope("StartPredictor"):
                 decoder_bilstm_output, _ = _createBiLSTM(coattention_encoding, context_lengths, self.config.n_hidden_dec_base, self.config.dropout)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
                 start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
                 start_pred = start_pred_tmp2# + bnew
 
             with tf.variable_scope("EndPredictor"):
                 decoder_bilstm_output, _ = _createBiLSTM(coattention_encoding, context_lengths, self.config.n_hidden_dec_base, self.config.dropout)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
+                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
                 end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
                 end_pred = end_pred_tmp2# + bnew
 
@@ -329,7 +328,7 @@ class Decoder(object):
             # Multiplies a single vector to every coattention matrix's column (corresponding to a single context word)
             # and adds biases to create logits
 
-            Wnew_shape = (n_hidden_mix, 1)
+            weights_shape = (n_hidden_mix, 1)
             #bnew_shape = (1)
 
             Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
@@ -337,16 +336,16 @@ class Decoder(object):
             initializer = tf.contrib.layers.xavier_initializer()
 
             with tf.variable_scope("StartPredictor"):
-                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                start_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
+                start_pred_tmp = tf.matmul(Ureshape, weights)# + bnew
                 start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
                 start_pred = start_pred_tmp2# + bnew
 
             with tf.variable_scope("EndPredictor"):
-                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                end_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
+                end_pred_tmp = tf.matmul(Ureshape, weights)# + bnew
                 end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
                 end_pred = end_pred_tmp2# + bnew
 
@@ -545,6 +544,9 @@ class QASystem(object):
 
         start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
         end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
+
+        L2_factor = 0.001
+        L2_loss = tf.add_n([tf.nn.l2_loss(tensor) for tensor in tf.trainable_variables() if 'weight' in tensor.name ]) * L2_factor
 
         self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss)
 
