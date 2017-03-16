@@ -548,7 +548,7 @@ class QASystem(object):
         L2_factor = 0.001
         L2_loss = tf.add_n([tf.nn.l2_loss(tensor) for tensor in tf.trainable_variables() if 'weight' in tensor.name ]) * L2_factor
 
-        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss)
+        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss) + L2_loss
 
     def setup_hmn_loss(self):
         # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
