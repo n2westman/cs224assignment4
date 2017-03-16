@@ -115,10 +115,15 @@ class BiLSTMEncoder(object):
         with tf.variable_scope("Encoder"):
             lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
             lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
+
+            # If we have dropout, drop it out
+            if self.config.dropout < 1.0:
+                lstm_fw_cell = tf.contrib.rnn.DropoutWrapper(lstm_fw_cell, input_keep_prob=self.config.dropout, output_keep_prob=self.config.dropout)
+                lstm_bw_cell = tf.contrib.rnn.DropoutWrapper(lstm_bw_cell, input_keep_prob=self.config.dropout, output_keep_prob=self.config.dropout)
+
             hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
-                                                      embeddings_drop,
+                                                      embeddings,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
@@ -154,16 +159,15 @@ class LSTMEncoder(object):
         return hidden_state, final_state
 
 class FFNN(object):
-    def __init__(self, input_size, output_size, hidden_size):
+    def __init__(self, input_size, output_size, hidden_size, dropout=1.0):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.dropout = dropout
 
-    def forward_prop(self, inputs, dropout_placeholder):
+    def forward_prop(self, inputs):
         """
         General 1-layer FFNN.
-
-        TODO(nwestman): Turn dropout off at test time.
 
         :return: predictions
         """
@@ -176,11 +180,14 @@ class FFNN(object):
             b2 = tf.Variable(tf.zeros((1, self.output_size), tf.float32))
 
         h = tf.nn.relu(tf.matmul(inputs, W1) + b1) # samples x n_hidden_dec
-        h_drop = tf.nn.dropout(h, dropout_placeholder)
+
+        if self.dropout < 1.0:
+            h = tf.nn.dropout(h, self.dropout)
+
         if self.output_size > 1:
-            output = tf.matmul(h_drop, W2) + b2
+            output = tf.matmul(h, W2) + b2
         else:
-            output = tf.matmul(h_drop, W2) # don't need bias if output_size == 1
+            output = tf.matmul(h, W2) # don't need bias if output_size == 1
         return output # samples x context_words
 
 class Mixer(object):
@@ -214,25 +221,20 @@ class Mixer(object):
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
-
-        # Forward direction cell
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
-        # Backward direction cell
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
-
         # Dimensionalities:
         # D_C_d: samples x context_words x 3*2*n_hidden_enc
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
+
+        biLSTMLayer = BiLSTMEncoder(self.config)
 
         with tf.variable_scope("Mixer"):
-            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
+            U, U_final = biLSTMLayer.encode(D_C_d, context_lengths)
 
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
-        return tf.concat(U, 2), U_final_hidden
+        return U, U_final_hidden
 
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
@@ -240,7 +242,7 @@ class Decoder(object):
     def __init__(self, config):
         self.config = config
 
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
+    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -335,13 +337,13 @@ class Decoder(object):
             output_size = 1
 
             with tf.variable_scope("StartPredictor"):
-                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
-                start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
+                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base, self.config.dropout)
+                start_pred_tmp = start_ffnn.forward_prop(Ureshape)
                 start_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
             with tf.variable_scope("EndPredictor"):
-                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
-                end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
+                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base, self.config.dropout)
+                end_pred_tmp = end_ffnn.forward_prop(Ureshape)
                 end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
 
 
@@ -374,13 +376,13 @@ class Decoder(object):
         else:
             # This uses only the final hidden layer from the coattention matrix,
             # and feeds it into a simple neural net
-            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec_base, self.config.output_size)
+            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec_base, self.config.output_size, self.config.dropout)
 
             with tf.variable_scope("StartPredictor"):
-                start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
+                start_pred = ffnn.forward_prop(coattention_encoding_final_states)
 
             with tf.variable_scope("EndPredictor"):
-                end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
+                end_pred = ffnn.forward_prop(coattention_encoding_final_states)
 
         return start_pred, end_pred
 
@@ -513,7 +515,6 @@ class QASystem(object):
         self.context_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.output_size))
         self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
         self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
-        self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
@@ -544,10 +545,10 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        coattention_encoding, coattention_encoding_final_states \
-            = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        coattention_encoding, coattention_encoding_final_states = \
+            self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
         self.start_prediction, self.end_prediction = \
-            self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
+            self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder)
 
 
     def setup_loss(self):
@@ -616,7 +617,7 @@ class QASystem(object):
         This method is equivalent to a step() function
         :return: loss - the training loss
         """
-        input_feed = self.create_feed_dict(train_x, train_y, 1.0 - self.config.dropout)
+        input_feed = self.create_feed_dict(train_x, train_y)
 
         output_feed = [self.train_op, self.loss]
 
@@ -733,7 +734,7 @@ class QASystem(object):
 
         return f1, em, valid_loss
 
-    def create_feed_dict(self, batch_x, batch_y=None, dropout=1.0):
+    def create_feed_dict(self, batch_x, batch_y=None):
         """Creates the feed_dict for the dependency parser.
 
         A feed_dict takes the form of:
@@ -753,7 +754,6 @@ class QASystem(object):
             self.questions_lengths_placeholder: batch_x['question_lengths'],
             self.context_placeholder: batch_x['contexts'],
             self.context_lengths_placeholder: batch_x['context_lengths'],
-            self.dropout_placeholder: dropout
         }
         if batch_y is not None:
             feed_dict[self.answers_numeric_list] = batch_y
