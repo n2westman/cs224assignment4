@@ -11,7 +11,7 @@ import tensorflow as tf
 import numpy as np
 
 from data_utils import load_and_preprocess_dataset
-from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from qa_model import BiLSTMEncoder, QASystem, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -28,14 +28,14 @@ tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just eval
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.7, "Fraction of units randomly dropped on non-recurrent connections.")
-tf.app.flags.DEFINE_integer("batch_size", 10, "Batch size to use during training.")
+tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use during training.")
 tf.app.flags.DEFINE_integer("epochs", 10, "Number of epochs to train.")
 tf.app.flags.DEFINE_integer("state_size", 200, "Size of each model layer.") # Not used
 tf.app.flags.DEFINE_integer("output_size", 600, "The output size of your model.")
 tf.app.flags.DEFINE_integer("embedding_size", 100, "Size of the pretrained vocabulary.")
-tf.app.flags.DEFINE_integer("n_hidden_enc", 200, "Number of nodes in the LSTMs of the encoder.")
-tf.app.flags.DEFINE_integer("n_hidden_mix", 200, "Number of nodes in the LSTMs of the mixer.")
-tf.app.flags.DEFINE_integer("n_hidden_dec_base", 200, "Number of nodes in the hidden layer of decoder V3.")
+tf.app.flags.DEFINE_integer("n_hidden_enc", 50, "Number of nodes in the LSTMs of the encoder.")
+tf.app.flags.DEFINE_integer("n_hidden_mix", 50, "Number of nodes in the LSTMs of the mixer.")
+tf.app.flags.DEFINE_integer("n_hidden_dec_base", 50, "Number of nodes in the hidden layer of decoder V3.")
 tf.app.flags.DEFINE_integer("n_hidden_dec_hmn", 50, "Number of nodes in the hidden layer of the HMN.")
 tf.app.flags.DEFINE_integer("max_examples", sys.maxint, "Number of examples over which to iterate")
 tf.app.flags.DEFINE_integer("maxout_size", 32, "Maxout size for HMN.")
@@ -102,8 +102,8 @@ def main(_):
     # Mix of pre-fab code and our code
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
-    train, mql = load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_examples=FLAGS.max_examples)
-    val, _ = load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_examples=FLAGS.max_examples)
+    train, mql = load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, FLAGS.max_examples)
+    val, _ = load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, FLAGS.max_examples)
 
     dataset = {
         'train': train,
@@ -117,13 +117,7 @@ def main(_):
     FLAGS.max_question_length = mql
 
     config = Config(FLAGS)
-    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
-        encoder = BiLSTMEncoder(config)
-        decoder = Decoder(config)
-    else:
-        encoder = LSTMEncoder(config)
-        decoder = HMNDecoder(config)
-    mixer = Mixer(config)
+    encoder = BiLSTMEncoder(config)
 
     qa = QASystem(encoder, embed_path, config, FLAGS.model)
 

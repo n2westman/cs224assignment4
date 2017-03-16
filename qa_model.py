@@ -50,7 +50,6 @@ class Config:
     instantiation.
     """
 
-
     def __init__(self, FLAGS):
         self.test = FLAGS.test
         self.shuffle = FLAGS.shuffle
@@ -82,6 +81,7 @@ class Config:
         self.vocab_path = FLAGS.vocab_path
         self.embed_path = FLAGS.embed_path
         self.model = FLAGS.model
+        self.n_hidden_enc = FLAGS.n_hidden_enc
 
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -125,34 +125,6 @@ class BiLSTMEncoder(object):
                                                       dtype=tf.float32)
         return hidden_state_fw + hidden_state_bw, final_state
 
-class LSTMEncoder(object):
-    def __init__(self, config):
-        self.config = config
-
-    def encode(self, embeddings, sequence_length, initial_state=None):
-        """
-        In a generalized encode function, you pass in your inputs,
-        masks, and an initial
-        hidden state input into this function.
-
-        :param inputs: Symbolic representations of your input
-        :param masks: this is to make sure tf.nn.dynamic_rnn doesn't iterate
-                      through masked steps
-        :param encoder_state_input: (Optional) pass this as initial hidden state
-                                    to tf.nn.dynamic_rnn to build conditional representations
-        :return: an encoded representation of your input.
-                 It can be context-level representation, word-level representation,
-                 or both.
-        """
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-        hidden_state, final_state = tf.nn.dynamic_rnn(lstm_cell,
-                                                  embeddings,
-                                                  initial_state=initial_state,
-                                                  sequence_length=sequence_length,
-                                                  dtype=tf.float32)
-
-        return hidden_state, final_state
-
 class FFNN(object):
     def __init__(self, input_size, output_size, hidden_size):
         self.input_size = input_size
@@ -182,313 +154,6 @@ class FFNN(object):
         else:
             output = tf.matmul(h_drop, W2) # don't need bias if output_size == 1
         return output # samples x context_words
-
-class Mixer(object):
-    # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
-
-    def __init__(self, config):
-            self.config = config
-
-    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
-        # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
-
-        # Dimensionalities:
-        # bilstm_encoded_questions: samples x question_words x 2*n_hidden_enc
-        # bilstm_encoded_contexts: samples x context_words x 2*n_hidden_enc
-
-        # Dimensionalities:
-        # affinity_matrix_L: samples x question_words x context_words
-        # normalized_attention_weights_A_q: samples x question_words x context_words
-        # normalized_attention_weights_A_d: samples x context_words x question_words
-        # attention_contexts_C_q = samples x 2*n_hidden_enc x question_words
-        affinity_matrix_L = tf.matmul(bilstm_encoded_questions, tf.transpose(bilstm_encoded_contexts, perm = [0, 2, 1]))
-        normalized_attention_weights_A_q = tf.nn.softmax(affinity_matrix_L)
-        normalized_attention_weights_A_d = tf.nn.softmax(tf.transpose(affinity_matrix_L, perm = [0, 2, 1]))
-        attention_contexts_C_q = tf.transpose(tf.matmul(normalized_attention_weights_A_q, bilstm_encoded_contexts), perm = [0, 2, 1])
-
-        # Dimensionalities:
-        # Q_C_q_concat: samples x 2*2*n_hidden_enc * question_words
-        # coattention_context_C_d: samples x 2*2*n_hidden_enc * context_words
-        bilstm_encoded_questions_transpose = tf.transpose(bilstm_encoded_questions, perm = [0, 2, 1])
-        Q_C_q_concat = tf.concat([bilstm_encoded_questions_transpose, attention_contexts_C_q], 1)
-        A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
-        coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
-
-
-        # Forward direction cell
-        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
-        # Backward direction cell
-        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
-
-        # Dimensionalities:
-        # D_C_d: samples x context_words x 3*2*n_hidden_enc
-        # U: samples x context_words x 2*n_hidden_mix
-        C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
-        D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
-
-        with tf.variable_scope("Mixer"):
-            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
-
-        # This gets the final forward & backward hidden states from the output, and concatenates them
-        U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
-        return tf.concat(U, 2), U_final_hidden
-
-class Decoder(object):
-    # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
-
-    def __init__(self, config):
-        self.config = config
-
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout_placeholder):
-        """
-        takes in a knowledge representation
-        and output a probability estimation over
-        all paragraph tokens on which token should be
-        the start of the answer span, and which should be
-        the end of the answer span.
-
-        :param knowledge_rep: it is a representation of the paragraph and question,
-                              decided by how you choose to implement the encoder
-        :return:
-        """
-
-        # Dimensionalities:
-        # coattention_encoding: samples x context_words x 2*n_hidden_mix
-        # coattention_encoding_final_states: samples x 2*n_hidden_mix
-        # decoder_output_concat: samples x context_words x 2*n_hidden_dec
-
-        num_samples = coattention_encoding.get_shape()[0]
-        max_context_words = coattention_encoding.get_shape()[1]
-        n_hidden_mix = coattention_encoding.get_shape()[2]
-
-        # What do we want to do here? Create a simple regression / single layer neural net
-        # We have U_final = samples x 2*n_hidden_mix input
-        # We want to do h = relu(U * W + b1)
-        # Here, W has to be 2*n_hidden_mix x n_hidden_dec
-        # b has to be n_hidden_dec
-
-        U = coattention_encoding
-        U_final = coattention_encoding_final_states
-
-        if self.config.model == "baseline-v4":
-            USE_DECODER_VERSION = 4
-        elif self.config.model == "baseline-v3":
-            USE_DECODER_VERSION = 3
-        else:
-            USE_DECODER_VERSION = 2
-        logging.info("Using decoder version %d" % USE_DECODER_VERSION)
-
-
-        if USE_DECODER_VERSION == 4:
-            # Similar to BiDAF paper
-            # For start_pred, just use a vector (like V2)
-            # For end_pred, adding an additional BiLSTM
-
-            Wnew_shape = (n_hidden_mix, 1)
-            W2new_shape = (n_hidden_mix, 1)
-            #bnew_shape = (1)
-
-            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-
-            initializer = tf.contrib.layers.xavier_initializer()
-
-            with tf.variable_scope("StartPredictor"):
-                with tf.variable_scope("DecoderBiLSTM"):
-                    # Forward direction cell
-                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    # Backward direction cell
-                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
-                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
-                        sequence_length=context_lengths, dtype=tf.float32)
-                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
-                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
-                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
-                start_pred = start_pred_tmp2# + bnew
-
-            with tf.variable_scope("EndPredictor"):
-                with tf.variable_scope("DecoderBiLSTM"):
-                    # Forward direction cell
-                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    # Backward direction cell
-                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
-                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
-                        sequence_length=context_lengths, dtype=tf.float32)
-                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
-                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, W2new)# + bnew
-                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
-                end_pred = end_pred_tmp2# + bnew
-
-        elif USE_DECODER_VERSION == 3:
-            # This decoder also uses the full coattention matrix as input
-            # It then takes a matrix coattention column (corresponding to a single context word)
-            # And throws it into a simple FFNN
-            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-            output_size = 1
-
-            with tf.variable_scope("StartPredictor"):
-                start_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
-                start_pred_tmp = start_ffnn.forward_prop(Ureshape, dropout_placeholder)
-                start_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
-
-            with tf.variable_scope("EndPredictor"):
-                end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
-                end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
-                end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
-
-
-        elif USE_DECODER_VERSION == 2:
-            # This decoder uses the full coattention matrix as input
-            # Multiplies a single vector to every coattention matrix's column (corresponding to a single context word)
-            # and adds biases to create logits
-
-            Wnew_shape = (n_hidden_mix, 1)
-            #bnew_shape = (1)
-
-            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
-
-            initializer = tf.contrib.layers.xavier_initializer()
-
-            with tf.variable_scope("StartPredictor"):
-                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
-                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                start_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
-                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
-                start_pred = start_pred_tmp2# + bnew
-
-            with tf.variable_scope("EndPredictor"):
-                Wnew = tf.get_variable('Wnew', shape=Wnew_shape, initializer=initializer, dtype=tf.float32)
-                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                end_pred_tmp = tf.matmul(Ureshape, Wnew)# + bnew
-                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
-                end_pred = end_pred_tmp2# + bnew
-
-        else:
-            # This uses only the final hidden layer from the coattention matrix,
-            # and feeds it into a simple neural net
-            ffnn = FFNN(self.config.n_hidden_mix * 2, self.config.n_hidden_dec_base, self.config.output_size)
-
-            with tf.variable_scope("StartPredictor"):
-                start_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
-
-            with tf.variable_scope("EndPredictor"):
-                end_pred = ffnn.forward_prop(coattention_encoding_final_states, dropout_placeholder)
-
-        return start_pred, end_pred
-
-class HMNDecoder(object):
-    # jorisvanmens: decodes coattention matrix using a complex Highway model (code by Ilya)
-    # based on co-attention paper
-    def __init__(self, config):
-        self.config = config
-
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
-        """
-        takes in a knowledge representation
-        and output a probability estimation over
-        all paragraph tokens on which token should be
-        the start of the answer span, and which should be
-        the end of the answer span.
-
-        :param knowledge_rep: it is a representation of the paragraph and question,
-                              decided by how you choose to implement the encoder
-        :return:
-        """
-        # coattention_encoding: samples x context_words x 2*n_hidden_mix
-        # return value: samples x context_words x 2*n_hidden_dec
-        maxout_size = self.config.maxout_size
-        max_decode_steps = self.config.max_decode_steps
-        self._initial_guess = np.zeros((2, self.config.batch_size), dtype=np.int32)
-        self._u = coattention_encoding
-
-        def select(u, pos, idx):
-              # u: (samples x context_words x 2 * n_hidden_mix)
-              # sample: (context_words x 2 * n_hidden_mix)
-              sample = tf.gather(u, idx)
-
-              # u_t: (2 * n_hidden_mix)
-              pos_idx = tf.gather(tf.reshape(pos, [-1]), idx)
-
-              u_t = tf.gather( sample, pos_idx)
-              return u_t
-
-        with tf.variable_scope('selector'):
-            # LSTM for decoding
-
-            lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_hmn)
-            # init highway fn
-            highway_alpha = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
-            highway_beta = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
-
-            # _u dimension: (batch_size, context, 2*self.config.n_hidden_dec_hmn)
-            # reshape self._u to (context, batch_size, 2*self.config.n_hidden_dec_hmn)
-            U = tf.transpose(self._u[:,:self.config.output_size,:], perm=[1, 0, 2])
-
-            # batch indices
-            loop_until = tf.to_int32(np.array(range(self.config.batch_size)))
-            # initial estimated positions
-            # s and e have dimension [self.batch_size]
-            s, e = tf.split(self._initial_guess, 2, 0)
-
-            fn = lambda idx: select(self._u, s, idx)
-            u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_s", u_s)
-
-            fn = lambda idx: select(self._u, e, idx)
-            u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_e", u_e)
-
-        self._s, self._e = [], []
-        self._alpha, self._beta = [], []
-        with tf.variable_scope("Decoder") as scope:
-            for step in range(max_decode_steps):
-                if step > 0: scope.reuse_variables()
-                # single step lstm
-                _input = tf.concat([u_s, u_e], 1)
-
-                print( "_input:", _input)
-                # Note: This is a single-step rnn.
-                # static_rnn does not need a time step dimension in input.
-                _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
-                # Note: h is the output state of the last layer which
-                # includes a tuple: (output, hidden state), which is concatenated along second axis.
-                print("h", h)
-                #print("st", st)
-                h_state = tf.concat(h, 1)
-                print("h_state", h_state)
-
-                with tf.variable_scope('highway_alpha'):
-                  # compute start position first
-                  print("u_s", u_s)
-                  fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
-                  alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  s = tf.reshape(tf.argmax(alpha, 0), [self.config.batch_size])
-                  # update start guess
-                  fn = lambda idx: select(self._u, s, idx)
-                  u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-
-                with tf.variable_scope('highway_beta'):
-                  # compute end position next
-                  fn = lambda u_t: highway_beta(u_t, h_state, u_s, u_e)
-                  beta = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  e = tf.reshape(tf.argmax(beta, 0), [self.config.batch_size])
-                  # update end guess
-                  fn = lambda idx: select(self._u, e, idx)
-                  u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-
-                self._s.append(s)
-                self._e.append(e)
-                self._alpha.append(tf.reshape(alpha, [self.config.batch_size, -1]))
-                self._beta.append(tf.reshape(beta, [self.config.batch_size, -1]))
-        return self._alpha, self._beta
 
 class QASystem(object):
     def __init__(self, encoder, embed_path, config, model="baseline"):
@@ -541,9 +206,9 @@ class QASystem(object):
             bilstm_encoded_questions, encoded_question_final_state = self.encoder.encode(self.question_embeddings_lookup, self.questions_lengths_placeholder)
 
         with tf.variable_scope("qindep"):
-            bilstm_encoded_questions_reshape = tf.reshape(bilstm_encoded_questions, [-1, self.config.embedding_size])
+            bilstm_encoded_questions_reshape = tf.reshape(bilstm_encoded_questions, [-1, self.config.n_hidden_enc])
 
-            q_indep_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            q_indep_ffnn = FFNN(self.config.n_hidden_enc, 1, self.config.n_hidden_dec_base)
             q_indep_scores = q_indep_ffnn.forward_prop(bilstm_encoded_questions_reshape, self.dropout_placeholder)
 
             q_indep_scores = tf.reshape(q_indep_scores, [-1, self.config.max_question_length])
@@ -557,12 +222,12 @@ class QASystem(object):
             context_embeddings_reshape = tf.reshape(self.context_embeddings_lookup, [-1, self.config.embedding_size])
 
             with tf.variable_scope("qscore"):
-                q_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+                q_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_base)
                 q_scores = q_ffnn.forward_prop(question_embeddings_reshape, self.dropout_placeholder)
                 q_scores = tf.expand_dims(tf.reshape(q_scores, [-1, self.config.max_question_length]), -1)
 
             with tf.variable_scope("cscore"):
-                c_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+                c_ffnn = FFNN(self.config.embedding_size, 1, self.config.n_hidden_dec_base)
                 c_scores = c_ffnn.forward_prop(context_embeddings_reshape, self.dropout_placeholder)
                 c_scores = tf.expand_dims(tf.reshape(c_scores, [-1, self.config.output_size]), -1)
 
@@ -576,20 +241,20 @@ class QASystem(object):
         logging.debug(q_indep_repr)
         logging.debug(q_align)
 
-        final_encoder = BiLSTMEncoder(3 * self.config.embedding_size)
+        final_encoder = BiLSTMEncoder(self.config)
         encoder_inputs = tf.concat([self.context_embeddings_lookup, q_indep_repr, q_align], 2)
 
         states, _ = final_encoder.encode(encoder_inputs, self.context_lengths_placeholder)
 
         with tf.variable_scope("start"):
-            start_inputs = tf.reshape(states, [-1, 3 * self.config.embedding_size])
-            output_ffnn = FFNN(3 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            start_inputs = tf.reshape(states, [-1, self.config.n_hidden_enc])
+            output_ffnn = FFNN(self.config.n_hidden_enc, 1, self.config.n_hidden_dec_base)
             start_scores = output_ffnn.forward_prop(start_inputs, self.dropout_placeholder)
             self.start_prediction = tf.reshape(start_scores, [-1, self.config.output_size])
 
         with tf.variable_scope("end"):
-            end_inputs = tf.reshape(states, [-1, 3 * self.config.embedding_size])
-            output_ffnn = FFNN(3 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+            end_inputs = tf.reshape(states, [-1, self.config.n_hidden_enc])
+            output_ffnn = FFNN(self.config.n_hidden_enc, 1, self.config.n_hidden_dec_base)
             end_scores = output_ffnn.forward_prop(end_inputs, self.dropout_placeholder)
             self.end_prediction = tf.reshape(start_scores, [-1, self.config.output_size])
 
@@ -603,7 +268,7 @@ class QASystem(object):
         #
         # with tf.variable_scope("decode"):
         #     spans_reshaped = tf.reshape(spans, [-1, 6 * self.config.embedding_size])
-        #     output_ffnn = FFNN(6 * self.config.embedding_size, 1, self.config.n_hidden_dec_v3)
+        #     output_ffnn = FFNN(6 * self.config.embedding_size, 1, self.config.n_hidden_dec_base)
         #     span_scores = output_ffnn.forward_prop(spans_reshaped, self.dropout_placeholder)
         #     span_scores = tf.reshape(span_scores, [self.config.batch_size, self.config.output_size, self.config.output_size])
         #

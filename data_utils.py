@@ -102,7 +102,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     logging.debug("Max question length: %s" % max_question_length)
     logging.debug("Max context length: %s" % max_context_length)
 
-    return dataset
+    return dataset, max_question_length
 
 def split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
     """
