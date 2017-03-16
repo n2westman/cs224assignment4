@@ -23,7 +23,6 @@ logging.basicConfig(level=logging.INFO)
 
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
 tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
-tf.app.flags.DEFINE_boolean("shuffle", True, "Shuffle the batches.")
 tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
@@ -138,10 +137,15 @@ def main(_):
 
         save_train_dir = get_normalized_train_dir(FLAGS.train_dir)
 
-        # Kick off actual training
-        qa.train(sess, dataset, save_train_dir)
-
-        #qa.evaluate_answer(sess, dataset, vocab, FLAGS.evaluate, log=True)
+        if FLAGS.evaluate:
+            logging.info("Evaluating current model..")
+            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
+            logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
+            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
+            logging.info("Train loss: %s" % format(valid_loss, '.5f'))
+        else:
+            # Kick off actual training
+            qa.train(sess, dataset, save_train_dir)
 
 if __name__ == "__main__":
     tf.app.run()

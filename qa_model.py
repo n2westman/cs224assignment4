@@ -10,7 +10,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from data_utils import shuffle_and_open_dataset, split_in_batches
+from data_utils import open_dataset, split_in_batches
 from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
@@ -53,7 +53,6 @@ class Config:
 
     def __init__(self, FLAGS):
         self.test = FLAGS.test
-        self.shuffle = FLAGS.shuffle
         self.evaluate = FLAGS.evaluate
         self.learning_rate = FLAGS.learning_rate
         self.max_gradient_norm = FLAGS.max_gradient_norm
@@ -701,10 +700,12 @@ class QASystem(object):
         f1 = 0.
         em = 0.
 
+        random.shuffle(dataset)
+
         # cap number of samples
         dataset = dataset[:sample]
 
-        questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset, shuffle=self.config.shuffle)
+        questions, question_lengths, contexts, context_lengths, answers = open_dataset(dataset)
         data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
@@ -788,14 +789,6 @@ class QASystem(object):
 
         save_path = os.path.join(train_dir, self.model)
 
-        if self.config.evaluate:
-            logging.info("Evaluating current model..")
-            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
-            logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
-            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
-            logging.info("Train loss: %s" % format(valid_loss, '.5f'))
-            exit()
-
         total_parameters = 0
         for variable in tf.trainable_variables():
             shape = variable.get_shape()
@@ -806,7 +799,8 @@ class QASystem(object):
 
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
-            questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset['train'], shuffle=self.config.shuffle)
+            random.shuffle(dataset['train']) # Make sure to shuffle the dataset.
+            questions, question_lengths, contexts, context_lengths, answers = open_dataset(dataset['train'])
             data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()

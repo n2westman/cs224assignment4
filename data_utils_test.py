@@ -1,7 +1,7 @@
 import tensorflow as tf
 import logging
 
-from data_utils import load_and_preprocess_dataset, shuffle_and_open_dataset, split_in_batches
+from data_utils import load_and_preprocess_dataset, open_dataset, split_in_batches
 from qa_data import PAD_ID
 
 logging.disable(logging.INFO)
@@ -19,7 +19,7 @@ class DataUtilsTest(tf.test.TestCase):
     def test_cap_length(self):
         max_context_length = 5
         dataset = load_and_preprocess_dataset(TEST_DATA_PATH, TEST_DATA_FILE, max_context_length, 4)
-        _, _, contexts, _, _ = shuffle_and_open_dataset(dataset, shuffle=False)
+        _, _, contexts, _, _ = open_dataset(dataset)
 
         for context in contexts:
             assert len(context) == max_context_length
@@ -27,7 +27,7 @@ class DataUtilsTest(tf.test.TestCase):
     def test_add_context_padding_length(self):
         max_context_length = 10
         dataset = load_and_preprocess_dataset(TEST_DATA_PATH, TEST_DATA_FILE, max_context_length, 4)
-        _, _, contexts, context_lengths, _ = shuffle_and_open_dataset(dataset, shuffle=False)
+        _, _, contexts, context_lengths, _ = open_dataset(dataset)
 
         for context, length in zip(contexts, context_lengths):
             for val in context[:length]:
@@ -43,7 +43,7 @@ class DataUtilsTest(tf.test.TestCase):
         batch_size = 9
         num_batches = 5
 
-        questions, question_lengths, contexts, context_lengths, answers = shuffle_and_open_dataset(dataset, shuffle=False)
+        questions, question_lengths, contexts, context_lengths, answers = open_dataset(dataset)
 
         batches = split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=answers)
 

@@ -9,13 +9,9 @@ from qa_data import PAD_ID
 
 logging.basicConfig(level=logging.INFO)
 
-def shuffle_and_open_dataset(dataset, shuffle=True):
-    if shuffle:
-        random.shuffle(dataset)
-
+def open_dataset(dataset):
     inputs, answers = zip(*dataset)
     questions, question_lengths, contexts, context_lengths = zip(*inputs)
-
     return questions, question_lengths, contexts, context_lengths, answers
 
 def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
