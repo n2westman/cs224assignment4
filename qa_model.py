@@ -82,27 +82,6 @@ class Config:
         self.embed_path = FLAGS.embed_path
         self.model = FLAGS.model
 
-def _createBiLSTM(embeddings, sequence_length, hidden_size, dropout, initial_state=None):
-    if initial_state is not None:
-        initial_state_fw = initial_state[0]
-        initial_state_bw = initial_state[1]
-    else:
-        initial_state_fw = None
-        initial_state_bw = None
-
-    lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=1.0)
-    lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(hidden_size, forget_bias=1.0)
-    embeddings_drop = tf.nn.dropout(embeddings, dropout)
-    hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
-                                              lstm_bw_cell,
-                                              embeddings_drop,
-                                              initial_state_fw=initial_state_fw,
-                                              initial_state_bw=initial_state_bw,
-                                              sequence_length=sequence_length,
-                                              dtype=tf.float32)
-
-    return tf.concat(hidden_state, 2), final_state
-
 class BiLSTMEncoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
     def __init__(self, config):
@@ -124,8 +103,26 @@ class BiLSTMEncoder(object):
                  It can be context-level representation, word-level representation,
                  or both.
         """
+
+        if initial_state is not None:
+            initial_state_fw = initial_state[0]
+            initial_state_bw = initial_state[1]
+        else:
+            initial_state_fw = None
+            initial_state_bw = None
+
         with tf.variable_scope("Encoder"):
-            return _createBiLSTM(embeddings, sequence_length, self.config.n_hidden_enc, self.config.dropout, initial_state)
+            lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
+            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
+            hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
+                                                      lstm_bw_cell,
+                                                      embeddings_drop,
+                                                      initial_state_fw=initial_state_fw,
+                                                      initial_state_bw=initial_state_bw,
+                                                      sequence_length=sequence_length,
+                                                      dtype=tf.float32)
+        return tf.concat(hidden_state, 2), final_state
 
 class LSTMEncoder(object):
     def __init__(self, config):
@@ -216,18 +213,25 @@ class Mixer(object):
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
+
+        # Forward direction cell
+        lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
+        # Backward direction cell
+        lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
+
         # Dimensionalities:
         # D_C_d: samples x context_words x 3*2*n_hidden_enc
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
+        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
 
         with tf.variable_scope("Mixer"):
-            U, U_final = _createBiLSTM(D_C_d, context_lengths, self.config.n_hidden_mix, self.config.dropout)
+            U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
 
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
-        return U, U_final_hidden
+        return tf.concat(U, 2), U_final_hidden
 
 class Decoder(object):
     # jorisvanmens: decodes coattention matrix using a simple neural net (code by Joris)
@@ -288,8 +292,16 @@ class Decoder(object):
             initializer = tf.contrib.layers.xavier_initializer()
 
             with tf.variable_scope("StartPredictor"):
-                decoder_bilstm_output, _ = _createBiLSTM(coattention_encoding, context_lengths, self.config.n_hidden_dec_base, self.config.dropout)
-                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
                 start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
@@ -297,8 +309,16 @@ class Decoder(object):
                 start_pred = start_pred_tmp2# + bnew
 
             with tf.variable_scope("EndPredictor"):
-                decoder_bilstm_output, _ = _createBiLSTM(coattention_encoding, context_lengths, self.config.n_hidden_dec_base, self.config.dropout)
-                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
                 end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
