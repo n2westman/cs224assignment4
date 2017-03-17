@@ -149,11 +149,8 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     answers = {}
 
-    contexts, questions, question_uuids = dataset
+    contexts, context_lengths, questions, question_lengths, question_uuids = dataset
     counter = 0
-
-    question_lengths = [len(x) for x in questions]
-    context_lengths = [len(x) for x in contexts]
 
     batches = split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
 
@@ -196,8 +193,10 @@ def process_data(data_list, max_length=None):
     if max_length is None:
         max_length = max(map(len, data_list))
 
+    lengths = [len(x) for x in data_list]
+
     # 3: Cap lengths + pad
-    return map(lambda x: x[:max_length] + ([str(qa_data.PAD_ID)] * (max_length - len(x))), data_list)
+    return map(lambda x: x[:max_length] + ([str(qa_data.PAD_ID)] * (max_length - len(x))), data_list), lengths
 
 def main(_):
 
@@ -221,10 +220,10 @@ def main(_):
     dev_filename = os.path.basename(FLAGS.dev_path)
     context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
 
-    context_data = process_data(context_data, FLAGS.output_size)
-    question_data = process_data(question_data)
+    context_data, context_lengths = process_data(context_data, FLAGS.output_size)
+    question_data, question_lengths = process_data(question_data)
 
-    dataset = (context_data, question_data, question_uuid_data)
+    dataset = (context_data, context_lengths, question_data, question_lengths, question_uuid_data)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
