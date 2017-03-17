@@ -1,51 +1,4 @@
 import tensorflow as tf
-from tensorflow.contrib.layers.python.layers import utils
-from tensorflow.python.framework import ops
-from tensorflow.python.framework import tensor_shape
-from tensorflow.python.ops import gen_array_ops
-from tensorflow.python.ops import math_ops
-
-
-import logging
-
-
-def maxout(inputs,
-           num_units,
-           axis=None,
-           outputs_collections=None,
-           scope=None):
-  """Adds a maxout op which is a max pooling performed in filter/channel
-  dimension. This can also be used after fully-connected layers to reduce
-  number of features.
-  Args:
-    inputs: A Tensor on which maxout will be performed
-    num_units: Specifies how many features will remain after max pooling at the
-      channel dimension. This must be multiple of number of channels.
-    axis: The dimension where max pooling will be performed. Default is the
-      last dimension.
-    outputs_collections: The collections to which the outputs are added.
-    scope: Optional scope for name_scope.
-  Returns:
-    A `Tensor` representing the results of the pooling operation.
-  Raises:
-    ValueError: if num_units is not multiple of number of features.
-    """
-  with ops.name_scope(scope, 'MaxOut', [inputs]) as sc:
-    inputs = ops.convert_to_tensor(inputs)
-    shape = inputs.get_shape().as_list()
-    if axis is None:
-      # Assume that channel is the last dimension
-      axis = -1
-    num_channels = shape[axis]
-    if num_channels % num_units:
-      raise ValueError('number of features({}) is not '
-                       'a multiple of num_units({})'
-              .format(num_channels, num_units))
-    shape[axis] = -1
-    shape += [num_channels // num_units]
-    outputs = math_ops.reduce_max(gen_array_ops.reshape(inputs, shape), -1,
-                                  keep_dims=False)
-    return utils.collect_named_outputs(outputs_collections, sc, outputs)
 
 def highway_maxout(hidden_size, pool_size):
   """highway maxout network."""
@@ -58,7 +11,7 @@ def highway_maxout(hidden_size, pool_size):
     :return: a score matrix of size [batch_size x max_context_words x l]
     """
 
-    p = 4
+    p = pool_size
     l = h.get_shape().as_list()[1]
     max_context_words = U.get_shape().as_list()[1]
 

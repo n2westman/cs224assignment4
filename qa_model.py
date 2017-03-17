@@ -256,10 +256,8 @@ class HMNDecoder(object):
         max_context_length = U.get_shape().as_list()[1]
         embedding_size = U.get_shape().as_list()[2]
 
-        # U: samples x context_words x 2*n_hidden_mix
-        # return value: samples x context_words x 2*n_hidden_dec
         maxout_size = self.config.maxout_size
-        max_decode_steps = 3
+        max_decode_steps = self.config.max_decode_steps
 
         highway_alpha = highway_maxout(embedding_size, maxout_size)
         highway_beta = highway_maxout(embedding_size, maxout_size)
@@ -267,39 +265,32 @@ class HMNDecoder(object):
         lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
         h = lstm_dec.zero_state(batch_size, tf.float32)
 
+        U = tf.nn.dropout(U, dropout)
+
         # u_s the embeddings of the start guess
         # u_e the embeddings of the end guess
         u_s = U[:,0,:]
         u_e = U[:,0,:]
 
-        U_lookup = tf.transpose(U, [1, 0, 2])
-
-
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
-                # single step lstm
-                _input = tf.concat([u_s, u_e], 1)
-
-                logging.info(_input)
-
-                _, h = lstm_dec(_input, h)
-
+                if step > 0: scope.reuse_variables()
+                _, h = lstm_dec(tf.concat([u_s, u_e], 1), h)
                 h_add = h[0] + h[1]
-
-                logging.info(h_add)
 
                 with tf.variable_scope('highway_alpha'):
                     alpha = highway_alpha(U, h_add, u_s, u_e)
                     start_preds = tf.reshape(tf.argmax(alpha, axis=1), [-1])
-                    u_s = U[1, start_preds, 1]
-
+                    start_one_hots = tf.expand_dims(tf.one_hot(start_preds, max_context_length), 2)
+                    u_s = tf.reduce_max(U * start_one_hots, axis=1)
 
                 with tf.variable_scope('highway_beta'):
                     beta = highway_beta(U, h_add, u_s, u_e)
-                    end_preds = tf.argmax(beta, axis=1)
-                    u_e = tf.gather(U_lookup, end_preds)
+                    end_preds = tf.reshape(tf.argmax(beta, axis=1), [-1])
+                    end_one_hots = tf.expand_dims(tf.one_hot(end_preds, max_context_length), 2)
+                    u_e = tf.reduce_max(U * end_one_hots, axis=1)
 
-        return start_preds, end_preds
+        return tf.reshape(alpha, [batch_size, max_context_length]), tf.reshape(beta, [batch_size, max_context_length])
 
 class QASystem(object):
     def __init__(self, encoder, decoder, mixer, embed_path, config, model="baseline"):
@@ -589,7 +580,6 @@ class QASystem(object):
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
-                exit(0)
                 if (idx + 1) % self.config.batches_per_save == 0 or self.config.test:
                     logging.info("Saving model after batch %s" % str(idx))
                     tic = time.time()
