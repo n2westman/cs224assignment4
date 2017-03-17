@@ -15,7 +15,7 @@ from six.moves import xrange
 import tensorflow as tf
 
 from data_utils import split_in_batches
-from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
 import qa_data
@@ -230,11 +230,10 @@ def main(_):
     # You must change the following code to adjust to your model
 
     config = Config(FLAGS)
+    encoder = Encoder(config)
     if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
-        encoder = BiLSTMEncoder(config)
         decoder = Decoder(config)
     else:
-        encoder = LSTMEncoder(config)
         decoder = HMNDecoder(config)
     mixer = Mixer(config)
 

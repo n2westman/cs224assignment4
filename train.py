@@ -11,7 +11,7 @@ import tensorflow as tf
 import numpy as np
 
 from data_utils import load_and_preprocess_dataset
-from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -113,11 +113,10 @@ def main(_):
     vocab, rev_vocab = initialize_vocab(vocab_path)
 
     config = Config(FLAGS)
+    encoder = Encoder(config)
     if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
-        encoder = BiLSTMEncoder(config)
         decoder = Decoder(config)
     else:
-        encoder = LSTMEncoder(config)
         decoder = HMNDecoder(config)
     mixer = Mixer(config)
 
