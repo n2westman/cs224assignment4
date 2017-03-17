@@ -414,8 +414,6 @@ class HMNDecoder(object):
         lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
         h = lstm_dec.zero_state(batch_size, tf.float32)
 
-        U = tf.nn.dropout(U, dropout)
-
         # u_s the embeddings of the start guess
         # u_e the embeddings of the end guess
         u_s = U[:,0,:]
@@ -539,7 +537,7 @@ class QASystem(object):
         This method is equivalent to a step() function
         :return: loss - the training loss
         """
-        input_feed = self.create_feed_dict(train_x, train_y, 1.0 - self.config.dropout)
+        input_feed = self.create_feed_dict(train_x, train_y, self.config.dropout)
 
         output_feed = [self.train_op, self.loss]
 
