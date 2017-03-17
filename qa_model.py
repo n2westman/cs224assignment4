@@ -15,7 +15,7 @@ from six.moves import xrange  # pylint: disable=redefined-builtin
 from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
 from evaluate import exact_match_score, f1_score
-from contrib_ops import highway_maxout, batch_linear
+from contrib_ops import highway_maxout
 
 logging.basicConfig(level=logging.INFO)
 
@@ -388,7 +388,7 @@ class HMNDecoder(object):
     def __init__(self, config):
         self.config = config
 
-    def decode(self, coattention_encoding, coattention_encoding_final_states, context_lengths, dropout):
+    def decode(self, U, unused, context_lengths, dropout):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -400,93 +400,44 @@ class HMNDecoder(object):
                               decided by how you choose to implement the encoder
         :return:
         """
-        # coattention_encoding: samples x context_words x 2*n_hidden_mix
-        # return value: samples x context_words x 2*n_hidden_dec
+
+        batch_size = self.config.batch_size
+        max_context_length = U.get_shape().as_list()[1]
+        embedding_size = U.get_shape().as_list()[2]
+
         maxout_size = self.config.maxout_size
         max_decode_steps = self.config.max_decode_steps
-        self._initial_guess = np.zeros((2, self.config.batch_size), dtype=np.int32)
-        self._u = coattention_encoding
 
-        def select(u, pos, idx):
-              # u: (samples x context_words x 2 * n_hidden_mix)
-              # sample: (context_words x 2 * n_hidden_mix)
-              sample = tf.gather(u, idx)
+        highway_alpha = highway_maxout(embedding_size, maxout_size)
+        highway_beta = highway_maxout(embedding_size, maxout_size)
 
-              # u_t: (2 * n_hidden_mix)
-              pos_idx = tf.gather(tf.reshape(pos, [-1]), idx)
+        lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
+        h = lstm_dec.zero_state(batch_size, tf.float32)
 
-              u_t = tf.gather( sample, pos_idx)
-              return u_t
+        # u_s the embeddings of the start guess
+        # u_e the embeddings of the end guess
+        u_s = U[:,0,:]
+        u_e = U[:,0,:]
 
-        with tf.variable_scope('selector'):
-            # LSTM for decoding
-
-            lstm_dec = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_hmn)
-            # init highway fn
-            highway_alpha = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
-            highway_beta = highway_maxout(self.config.n_hidden_dec_hmn, maxout_size)
-
-            # _u dimension: (batch_size, context, 2*self.config.n_hidden_dec_hmn)
-            # reshape self._u to (context, batch_size, 2*self.config.n_hidden_dec_hmn)
-            U = tf.transpose(self._u[:,:self.config.output_size,:], perm=[1, 0, 2])
-
-            # batch indices
-            loop_until = tf.to_int32(np.array(range(self.config.batch_size)))
-            # initial estimated positions
-            # s and e have dimension [self.batch_size]
-            s, e = tf.split(self._initial_guess, 2, 0)
-
-            fn = lambda idx: select(self._u, s, idx)
-            u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_s", u_s)
-
-            fn = lambda idx: select(self._u, e, idx)
-            u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
-            print( "u_e", u_e)
-
-        self._s, self._e = [], []
-        self._alpha, self._beta = [], []
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
                 if step > 0: scope.reuse_variables()
-                # single step lstm
-                _input = tf.concat([u_s, u_e], 1)
-
-                print( "_input:", _input)
-                # Note: This is a single-step rnn.
-                # static_rnn does not need a time step dimension in input.
-                _, h = tf.contrib.rnn.static_rnn(lstm_dec, [_input], dtype=tf.float32)
-                # Note: h is the output state of the last layer which
-                # includes a tuple: (output, hidden state), which is concatenated along second axis.
-                print("h", h)
-                #print("st", st)
-                h_state = tf.concat(h, 1)
-                print("h_state", h_state)
+                _, h = lstm_dec(tf.concat([u_s, u_e], 1), h)
+                h_add = h[0] + h[1]
 
                 with tf.variable_scope('highway_alpha'):
-                  # compute start position first
-                  print("u_s", u_s)
-                  fn = lambda u_t: highway_alpha(u_t, h_state, u_s, u_e)
-                  alpha = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  s = tf.reshape(tf.argmax(alpha, 0), [self.config.batch_size])
-                  # update start guess
-                  fn = lambda idx: select(self._u, s, idx)
-                  u_s = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+                    alpha = highway_alpha(U, h_add, u_s, u_e)
+                    start_preds = tf.reshape(tf.argmax(alpha, axis=1), [-1])
+                    start_one_hots = tf.expand_dims(tf.one_hot(start_preds, max_context_length), 2)
+                    u_s = tf.reduce_max(U * start_one_hots, axis=1)
 
                 with tf.variable_scope('highway_beta'):
-                  # compute end position next
-                  fn = lambda u_t: highway_beta(u_t, h_state, u_s, u_e)
-                  beta = tf.map_fn(lambda u_t: fn(u_t), U, dtype=tf.float32)
-                  e = tf.reshape(tf.argmax(beta, 0), [self.config.batch_size])
-                  # update end guess
-                  fn = lambda idx: select(self._u, e, idx)
-                  u_e = tf.map_fn(lambda idx: fn(idx), loop_until, dtype=tf.float32)
+                    beta = highway_beta(U, h_add, u_s, u_e)
+                    end_preds = tf.reshape(tf.argmax(beta, axis=1), [-1])
+                    end_one_hots = tf.expand_dims(tf.one_hot(end_preds, max_context_length), 2)
+                    u_e = tf.reduce_max(U * end_one_hots, axis=1)
 
-                self._s.append(s)
-                self._e.append(e)
-                self._alpha.append(tf.reshape(alpha, [self.config.batch_size, -1]))
-                self._beta.append(tf.reshape(beta, [self.config.batch_size, -1]))
-        return self._alpha, self._beta
+        return tf.reshape(alpha, [batch_size, max_context_length]), tf.reshape(beta, [batch_size, max_context_length])
 
 class QASystem(object):
     def __init__(self, encoder, decoder, mixer, embed_path, config, model="baseline"):
@@ -506,21 +457,18 @@ class QASystem(object):
 
         # ==== set up placeholder tokens ========
 
-        self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
-        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.output_size))
-        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
-        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
+        self.question_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, None))
+        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.config.output_size))
+        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
+        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(self.config.batch_size, 2))
         self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
             self.setup_system()
-            if model == 'baseline' or model == 'baseline-v2' or model == 'baseline-v3' or model == 'baseline-v4':
-                self.setup_loss()
-            else:
-                self.setup_hmn_loss()
+            self.setup_loss()
             self.setup_train_op()
 
         # ==== set up training/updating procedure ====
@@ -542,10 +490,8 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        coattention_encoding, coattention_encoding_final_states \
-            = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
-        self.start_prediction, self.end_prediction = \
-            self.decoder.decode(coattention_encoding, coattention_encoding_final_states, self.context_lengths_placeholder, self.dropout_placeholder)
+        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        self.start_prediction, self.end_prediction = self.decoder.decode(U, U_final, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
     def setup_loss(self):
@@ -570,32 +516,6 @@ class QASystem(object):
 
         self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss) + L2_loss
 
-    def setup_hmn_loss(self):
-        # jorisvanmens: calculates loss for the HMN decoder (code by Ilya)
-        # based on co-attention paper
-        def _loss_shared(logits, labels):
-          labels = tf.Print( labels, [tf.shape(labels)] )
-          labels = tf.reshape(labels, [self.config.batch_size])
-          cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
-              logits=logits, labels=labels, name='per_step_cross_entropy')
-          cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
-          tf.add_to_collection('per_step_losses', cross_entropy_mean)
-          return tf.add_n(tf.get_collection('per_step_losses'), name='per_step_loss')
-
-        def _loss_multitask(logits_alpha, labels_alpha,
-                          logits_beta, labels_beta):
-            """Cumulative loss for start and end positions."""
-            with tf.variable_scope("loss"):
-                fn = lambda logit, label: _loss_shared(logit, label)
-                loss_alpha = [fn(alpha, labels_alpha) for alpha in logits_alpha]
-                loss_beta = [fn(beta, labels_beta) for beta in logits_beta]
-                return tf.reduce_sum([loss_alpha, loss_beta], name='loss')
-
-        alpha_true, beta_true = tf.split(self.answers_numeric_list, 2, 0)
-        self.loss = _loss_multitask(self.decoder._alpha, alpha_true,
-                                    self.decoder._beta, beta_true)
-
-
     def setup_embeddings(self):
         # jorisvanmens: looks up embeddings (code by Ilya)
         """
@@ -617,7 +537,7 @@ class QASystem(object):
         This method is equivalent to a step() function
         :return: loss - the training loss
         """
-        input_feed = self.create_feed_dict(train_x, train_y, 1.0 - self.config.dropout)
+        input_feed = self.create_feed_dict(train_x, train_y, self.config.dropout)
 
         output_feed = [self.train_op, self.loss]
 
