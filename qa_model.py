@@ -426,7 +426,7 @@ class HMNDecoder(object):
         highway_alpha = highway_maxout(embedding_size, maxout_size)
         highway_beta = highway_maxout(embedding_size, maxout_size)
 
-        lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
+        cell = tf.contrib.rnn.BasicLSTMCell(embedding_size)
 
         # u_s the embeddings of the start guess
         # u_e the embeddings of the end guess
@@ -434,22 +434,22 @@ class HMNDecoder(object):
         u_e = U[:,0,:]
 
         # set up initial state
-        h = (tf.zeros_like(u_s), tf.zeros_like(u_s))
+        h = None
 
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
                 if step > 0: scope.reuse_variables()
-                _, h = lstm_dec(tf.concat([u_s, u_e], 1), h)
+                _, h = tf.contrib.rnn.static_rnn(cell, [tf.concat([u_s, u_e], 1)], initial_state=h, dtype=tf.float32)
                 h_add = h[0] + h[1]
 
                 with tf.variable_scope('highway_alpha'):
                     alpha = highway_alpha(U, h_add, u_s, u_e)
-                    start_preds = tf.argmax(scores, axis=1)
+                    start_preds = tf.argmax(alpha, axis=1)
                     u_s = batch_slice(U, start_preds)
 
                 with tf.variable_scope('highway_beta'):
                     beta = highway_beta(U, h_add, u_s, u_e)
-                    end_preds = tf.argmax(scores, axis=1)
+                    end_preds = tf.argmax(beta, axis=1)
                     u_e = batch_slice(U, end_preds)
 
         return tf.reshape(alpha, [-1, max_context_length]), tf.reshape(beta, [-1, max_context_length])
