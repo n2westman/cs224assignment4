@@ -1,11 +1,18 @@
+try:
+    import google3
+    from google3.pyglib import gfile
+    from google3.experimental.users.ikuleshov.cs224n.qa_data import PAD_ID
+except:
+    from qa_data import PAD_ID
+
 import os
 import sys
 import logging
 import random
+import tensorflow as  tf
 
 from os.path import join as pjoin
 from itertools import izip
-from qa_data import PAD_ID
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,9 +38,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     question_ids_file = os.path.join(path, dataset + ".ids.question")
     answer_span_file = os.path.join(path, dataset + ".span")
 
-    assert os.path.exists(context_ids_file)
-    assert os.path.exists(question_ids_file)
-    assert os.path.exists(answer_span_file)
+    assert tf.gfile.Exists(context_ids_file)
+    assert tf.gfile.Exists(question_ids_file)
+    assert tf.gfile.Exists(answer_span_file)
 
     # Definition of the dataset -- note definition appears in multiple places
     questions = []
@@ -46,9 +53,9 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     min_input_length = 3 # Remove questions & contexts smaller than this
     num_examples = 0
 
-    with open(context_ids_file) as context_ids, \
-         open(question_ids_file) as question_ids, \
-         open(answer_span_file) as answer_spans:
+    with tf.gfile.GFile(context_ids_file) as context_ids, \
+         tf.gfile.GFile(question_ids_file) as question_ids, \
+         tf.gfile.GFile(answer_span_file) as answer_spans:
         max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
             # Load raw context, question, answer from file

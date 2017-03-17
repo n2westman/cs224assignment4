@@ -1,0 +1,112 @@
+
+import "//learning/brain/borg/tf.borg" as tf
+import "//learning/brain/borg/supervisor.borg" as sv
+import "//production/borg/templates/lambda/buildtool_support.borg" as build
+
+// Commands:
+// blaze build --config=cuda -c opt experimental/users/ikuleshov/cs224n:train.par learning/brain/public:tensorflow_std_server_gpu
+// allocator_borgcfg experimental/users/ikuleshov/cs224n/train.borg reload --vars=use_allocator=true --skip_confirmation
+
+vars = tf.vars{
+  // Enables use of allocator for all GPU jobs.
+  // This is a noop for CPU only jobs.
+  // Must use allocator_borgcfg tool with this .borg file.
+  use_allocator = true
+  gpu_constraints = 'tesla_k80'
+}
+
+service ikuleshov_squad_baseline = sv.joined_tmpl {
+  params {
+    model_dir = "/cns/li-d/home/ikuleshov2/squad_baseline/train/output"
+    user = 'ikuleshov'
+    platform = 'k80'
+
+    cell = 'oi'
+    num_workers = 1
+    use_gpu = true
+    rpc_layer = cond(use_gpu, 'bamm', 'rpc2')
+  }
+
+  scheduling = {
+    // This priority will be used as priority of the job within alloc.
+    // The priority of alloc will be decided according to this value too,
+    // but we support only 3 categories.
+    // FREEBIE (P25): < 100
+    // BATCH (uses batch scheduler): 100-115
+    // PROD (P200): >115
+    //
+    // Note that traino-gpu can only schedule at BATCH priority.
+    // You can use PROD with some other GPU user that has production
+    // priority quota in given cell.
+    priority = 115
+  }
+
+  job worker= tf.cpu_or_gpu_tmpl {
+    replicas = up.params.num_workers
+
+    requirements {
+      cpu = 4
+      gpu = 2
+      ram = 10G
+      disk = 2G
+      platform = 'k80'
+    }
+
+    params {
+      rpc_layer = up.up.params.rpc_layer
+       platform = 'k80'
+    }
+
+    binary = build.binfile_v2(
+        build.google3dir(myfilename()),
+        "experimental/users/ikuleshov/cs224n/train.par")
+
+    args {
+#      ps_tasks = ps.replicas
+      train_dir = params.model_dir
+#      task = '%task%'
+
+
+      evaluate=1
+      n_hidden_enc=100
+      n_hidden_mix=100
+      n_hidden_dec_base=100
+      batch_size=200
+      embedding_size=300
+      dropout=1.0
+      learning_rate=0.001
+      epochs=10
+      regularization=0.0001
+      vocab_path='/cns/li-d/home/ikuleshov2/squad_baseline/data/squad/vocab.dat'
+      embed_path='/cns/li-d/home/ikuleshov2/squad_baseline/data/squad/glove.trimmed.300.npz'
+      data_dir='/cns/li-d/home/ikuleshov2/squad_baseline/data/squad'
+      model='baseline-v4'
+    }
+  }
+
+
+// job tensorboard = tf.tensorboard_tmpl {
+//    requirements {
+//      cpu = 1.0
+//      ram = 2G
+//      disk = 2G
+//    }
+//    scheduling {
+//      priority = 100
+//      batch_quota {
+//        strategy = "RUN_SOON"
+//      }
+//    }
+//    args {
+//      logdir = params.model_dir
+//    }
+//  }
+
+  runtime = {
+    cell = params.cell
+  }
+
+  permissions {
+    user = params.user
+  }
+}

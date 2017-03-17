@@ -2,6 +2,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+try:
+    import google3
+except:
+    pass
+
 import gzip
 import os
 import re

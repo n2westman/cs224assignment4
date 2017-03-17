@@ -2,22 +2,30 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+try:
+    import google3
+    from google3.experimental.users.ikuleshov.cs224n.qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+    from google3.experimental.users.ikuleshov.cs224n.data_utils import load_and_preprocess_dataset
+    GOOGLE3 = True
+
+except ImportError:
+    from data_utils import load_and_preprocess_dataset
+    from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+    GOOGLE3 = False
+
 import os
 import json
 import sys
 import fileinput
+import logging
 
 import tensorflow as tf
 import numpy as np
 
-from data_utils import load_and_preprocess_dataset
-from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
-from qa_data import PAD_ID
 
-import logging
 
 logging.basicConfig(level=logging.INFO)
 
@@ -89,6 +97,9 @@ def get_normalized_train_dir(train_dir):
     if the location of the checkpoint files has moved, allowing usage with CodaLab.
     This must be done on both train.py and qa_answer.py in order to work.
     """
+    if not GOOGLE3:
+        return train_dir    
+
     global_train_dir = '/tmp/cs224n-squad-train'
     if os.path.exists(global_train_dir):
         os.unlink(global_train_dir)
@@ -122,10 +133,11 @@ def main(_):
 
     qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 
-    if not os.path.exists(FLAGS.log_dir):
-        os.makedirs(FLAGS.log_dir)
-    file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
-    logging.getLogger().addHandler(file_handler)
+    if not GOOGLE3:
+        if not os.path.exists(FLAGS.log_dir):
+            os.makedirs(FLAGS.log_dir)
+        file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
+        logging.getLogger().addHandler(file_handler)
 
     logging.info("Model parameters: %s" % vars(FLAGS))
     with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:

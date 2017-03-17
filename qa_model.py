@@ -2,6 +2,16 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+try:
+    import google3
+    from google3.experimental.users.ikuleshov.cs224n.evaluate import exact_match_score, f1_score
+    from google3.experimental.users.ikuleshov.cs224n.contrib_ops import highway_maxout
+    from google3.experimental.users.ikuleshov.cs224n.data_utils import open_dataset, split_in_batches
+except:
+    from evaluate import exact_match_score, f1_score
+    from contrib_ops import highway_maxout
+    from data_utils import open_dataset, split_in_batches
+
 import time
 import logging
 import random
@@ -10,12 +20,8 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from data_utils import open_dataset, split_in_batches
 from six.moves import xrange  # pylint: disable=redefined-builtin
-from tensorflow.python.ops import variable_scope as vs
 from pdb import set_trace as t
-from evaluate import exact_match_score, f1_score
-from contrib_ops import highway_maxout
 
 logging.basicConfig(level=logging.INFO)
 
@@ -507,7 +513,7 @@ class QASystem(object):
         Loads distributed word representations based on placeholder tokens
         :return:
         """
-        with vs.variable_scope("embeddings"):
+        with tf.variable_scope("embeddings"):
             embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
             self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
