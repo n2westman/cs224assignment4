@@ -1,8 +1,12 @@
 try:
     import google3
-    from google3.pyglib import gfile
+    GOOGLE3 = True
+except ImportError:
+    GOOGLE3 = False
+
+if GOOGLE3:
     from google3.experimental.users.ikuleshov.cs224n.qa_data import PAD_ID
-except:
+else:
     from qa_data import PAD_ID
 
 import os

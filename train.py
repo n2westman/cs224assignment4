@@ -4,14 +4,16 @@ from __future__ import print_function
 
 try:
     import google3
+    GOOGLE3 = True
+except ImportError:
+    GOOGLE3 = False
+
+if GOOGLE3:
     from google3.experimental.users.ikuleshov.cs224n.qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
     from google3.experimental.users.ikuleshov.cs224n.data_utils import load_and_preprocess_dataset
-    GOOGLE3 = True
-
-except ImportError:
+else:
     from data_utils import load_and_preprocess_dataset
     from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
-    GOOGLE3 = False
 
 import os
 import json

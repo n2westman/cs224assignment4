@@ -4,10 +4,15 @@ from __future__ import print_function
 
 try:
     import google3
+    GOOGLE3 = True
+except ImportError:
+    GOOGLE3 = False
+
+if GOOGLE3:
     from google3.experimental.users.ikuleshov.cs224n.evaluate import exact_match_score, f1_score
     from google3.experimental.users.ikuleshov.cs224n.contrib_ops import highway_maxout
     from google3.experimental.users.ikuleshov.cs224n.data_utils import open_dataset, split_in_batches
-except:
+else:
     from evaluate import exact_match_score, f1_score
     from contrib_ops import highway_maxout
     from data_utils import open_dataset, split_in_batches

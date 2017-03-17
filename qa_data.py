@@ -4,8 +4,9 @@ from __future__ import print_function
 
 try:
     import google3
-except:
-    pass
+    GOOGLE3 = True
+except ImportError:
+    GOOGLE3 = False
 
 import gzip
 import os
