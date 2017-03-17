@@ -388,7 +388,7 @@ class HMNDecoder(object):
     def __init__(self, config):
         self.config = config
 
-    def decode(self, U, context_lengths, dropout):
+    def decode(self, U, unused, context_lengths, dropout):
         """
         takes in a knowledge representation
         and output a probability estimation over
@@ -492,8 +492,8 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        U, _ = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
-        self.start_prediction, self.end_prediction = self.decoder.decode(U, self.context_lengths_placeholder, self.dropout_placeholder)
+        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        self.start_prediction, self.end_prediction = self.decoder.decode(U, U_final, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
     def setup_loss(self):

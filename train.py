@@ -11,7 +11,7 @@ import tensorflow as tf
 import numpy as np
 
 from data_utils import load_and_preprocess_dataset
-from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, HMNDecoder, Mixer, Config
+from qa_model import BiLSTMEncoder, LSTMEncoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 # jorisvanmens: these are prefab flags, we're using some of them, and some we don't (would be good to fix)
 tf.app.flags.DEFINE_boolean("test", False, "Test that the graph completes 1 batch.")
 tf.app.flags.DEFINE_boolean("evaluate", False, "Don't run training but just evaluate on the evaluation set.")
-tf.app.flags.DEFINE_float("learning_rate", 0.001, "Learning rate.")
+tf.app.flags.DEFINE_float("learning_rate", 0.01, "Learning rate.")
 tf.app.flags.DEFINE_float("max_gradient_norm", 10.0, "Clip gradients to this norm.")
 tf.app.flags.DEFINE_float("dropout", 0.7, "Fraction of units randomly kept (!) on non-recurrent connections.")
 tf.app.flags.DEFINE_integer("batch_size", 100, "Batch size to use during training.")
