@@ -140,9 +140,9 @@ def main(_):
 
         if FLAGS.evaluate:
             logging.info("Evaluating current model..")
-            _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
+            _, _, valid_loss = qa.evaluate_answer(sess, dataset['val'], len(dataset['val']))
             logging.info("Validation loss: %s" % format(valid_loss, '.5f'))
-            _, _, valid_loss = self.evaluate_answer(session, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
+            _, _, valid_loss = qa.evaluate_answer(sess, dataset['train'], len(dataset['val'])) #subset of full dataset for speed
             logging.info("Train loss: %s" % format(valid_loss, '.5f'))
         else:
             # Kick off actual training
