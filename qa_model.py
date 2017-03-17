@@ -301,7 +301,7 @@ class Decoder(object):
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
                 start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
@@ -318,7 +318,7 @@ class Decoder(object):
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
-                W2new = tf.get_variable('W2new', shape=W2new_shape, initializer=initializer, dtype=tf.float32)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
                 end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
