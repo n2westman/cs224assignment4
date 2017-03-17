@@ -33,6 +33,15 @@ def lengths_to_masks(lengths, max_length):
     return masks
 
 def batch_slice(params, indices):
+    """
+    Grabs a list of slices along the second axis in a tensor.
+
+    Similar to tf.gather(), but along axis=1.
+
+    arguments: params: A `Tensor` of params (batch_size, dim1, dim2, dim3 ...)
+               indices: Indices
+    returns:   masks: A `Tensor` of params (batch_size, dim2, dim3, ...)
+    """
     dim_size = tf.shape(params)[1]
     preds = tf.reshape(indices, [-1])
     one_hots = tf.expand_dims(tf.one_hot(preds, dim_size), 2)
