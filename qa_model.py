@@ -32,6 +32,12 @@ def lengths_to_masks(lengths, max_length):
     masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
     return masks
 
+def batch_slice(params, indices):
+    dim_size = tf.shape(params)[1]
+    preds = tf.reshape(indices, [-1])
+    one_hots = tf.expand_dims(tf.one_hot(preds, dim_size), 2)
+    return tf.reduce_max(params * one_hots, axis=1)
+
 def get_optimizer(opt):
     if opt == "adam":
         optfn = tf.train.AdamOptimizer
@@ -428,15 +434,13 @@ class HMNDecoder(object):
 
                 with tf.variable_scope('highway_alpha'):
                     alpha = highway_alpha(U, h_add, u_s, u_e)
-                    start_preds = tf.reshape(tf.argmax(alpha, axis=1), [-1])
-                    start_one_hots = tf.expand_dims(tf.one_hot(start_preds, max_context_length), 2)
-                    u_s = tf.reduce_max(U * start_one_hots, axis=1)
+                    start_preds = tf.argmax(scores, axis=1)
+                    u_s = batch_slice(U, start_preds)
 
                 with tf.variable_scope('highway_beta'):
                     beta = highway_beta(U, h_add, u_s, u_e)
-                    end_preds = tf.reshape(tf.argmax(beta, axis=1), [-1])
-                    end_one_hots = tf.expand_dims(tf.one_hot(end_preds, max_context_length), 2)
-                    u_e = tf.reduce_max(U * end_one_hots, axis=1)
+                    end_preds = tf.argmax(scores, axis=1)
+                    u_e = batch_slice(U, end_preds)
 
         return tf.reshape(alpha, [-1, max_context_length]), tf.reshape(beta, [-1, max_context_length])
 
