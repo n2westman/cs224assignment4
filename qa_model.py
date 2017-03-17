@@ -32,6 +32,10 @@ def lengths_to_masks(lengths, max_length):
     masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
     return masks
 
+def masked_loss(logits, labels, mask):
+    masked_logits = tf.multiply(mask, logits)
+    return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_logits, labels=labels))
+
 def batch_slice(params, indices):
     """
     Grabs a list of slices along the second axis in a tensor.
@@ -517,19 +521,13 @@ class QASystem(object):
 
         mask = lengths_to_masks(self.context_lengths_placeholder, self.config.output_size)
 
-        masked_start_preds = mask * self.start_prediction
-        masked_end_preds = mask * self.end_prediction
-
-        sparse_start_labels = self.answers_numeric_list[:, 0]
-        sparse_end_labels = self.answers_numeric_list[:, 1]
-
-        start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
-        end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
+        start_loss = masked_loss(self.start_prediction, self.answers_numeric_list[:, 0], mask)
+        end_loss = masked_loss(self.end_prediction, self.answers_numeric_list[:, 1], mask)
 
         L2_factor = self.config.regularization
         L2_loss = tf.add_n([tf.nn.l2_loss(tensor) for tensor in tf.trainable_variables() if 'weight' in tensor.name ]) * L2_factor
 
-        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss) + L2_loss
+        self.loss = start_loss + end_loss + L2_loss
 
     def setup_embeddings(self):
         # jorisvanmens: looks up embeddings (code by Ilya)

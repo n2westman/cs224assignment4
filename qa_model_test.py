@@ -1,7 +1,7 @@
 import random
 import tensorflow as tf
 
-from qa_model import lengths_to_masks, batch_slice
+from qa_model import lengths_to_masks, batch_slice, masked_loss
 
 class SquareTest(tf.test.TestCase):
     def test_lengths_to_masks(self):
@@ -23,6 +23,23 @@ class SquareTest(tf.test.TestCase):
             out = sess.run(output_feed, feed_dict)
 
             self.assertAllClose(out[0], expected_output)
+
+    def test_mask_loss(self):
+        with self.test_session() as sess:
+            masks  = [[1., 1., 1., 1., 0., 0., 0., 0.],
+                      [1., 1., 1., 1., 1., 1., 1., 1.],
+                      [1., 1., 1., 0., 0., 0., 0., 0.],
+                      [1., 1., 1., 1., 0., 0., 0., 0.],
+                      [1., 1., 1., 1., 1., 0., 0., 0.]]
+
+            logits = [[100.,   0.,   0.,   0., 500., 500., 500., 500.],
+                      [  0., 100.,   0.,   0.,   0.,   0.,   0.,   0.],
+                      [  0.,   0., 100., 500., 500., 500., 500., 500.],
+                      [  0.,   0.,   0., 100., 500., 500., 500., 500.],
+                      [  0.,   0.,   0.,   0., 100., 500., 500., 500.]]
+
+            labels = [0, 1, 2, 3, 4]
+            self.assertAllClose(sess.run(masked_loss(logits, labels, masks)), 0.)
 
     def test_batch_slices_constant(self):
         with self.test_session() as sess:
