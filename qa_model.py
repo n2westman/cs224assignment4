@@ -9,6 +9,7 @@ except ImportError:
     GOOGLE3 = False
 
 if GOOGLE3:
+    from google3.pyglib import gfile
     from google3.experimental.users.ikuleshov.cs224n.evaluate import exact_match_score, f1_score
     from google3.experimental.users.ikuleshov.cs224n.contrib_ops import highway_maxout
     from google3.experimental.users.ikuleshov.cs224n.data_utils import open_dataset, split_in_batches
@@ -454,7 +455,10 @@ class QASystem(object):
         self.mixer = mixer
         self.decoder = decoder
         self.config = config
-        self.pretrained_embeddings = np.load((tf.gfile.GFile(embed_path))["glove"]
+        if GOOGLE3:
+            self.pretrained_embeddings = np.load(gfile.GFile(embed_path))["glove"]
+        else:
+            self.pretrained_embeddings = np.load(embed_path)["glove"]
         self.model = model
 
         # ==== set up placeholder tokens ========
