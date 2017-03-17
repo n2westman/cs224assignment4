@@ -102,7 +102,7 @@ class Config:
         self.embed_path = FLAGS.embed_path
         self.model = FLAGS.model
 
-class BiLSTMEncoder(object):
+class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
     def __init__(self, config):
         self.config = config
@@ -143,34 +143,6 @@ class BiLSTMEncoder(object):
                                                       sequence_length=sequence_length,
                                                       dtype=tf.float32)
         return tf.concat(hidden_state, 2), final_state
-
-class LSTMEncoder(object):
-    def __init__(self, config):
-        self.config = config
-
-    def encode(self, embeddings, sequence_length, initial_state=None):
-        """
-        In a generalized encode function, you pass in your inputs,
-        masks, and an initial
-        hidden state input into this function.
-
-        :param inputs: Symbolic representations of your input
-        :param masks: this is to make sure tf.nn.dynamic_rnn doesn't iterate
-                      through masked steps
-        :param encoder_state_input: (Optional) pass this as initial hidden state
-                                    to tf.nn.dynamic_rnn to build conditional representations
-        :return: an encoded representation of your input.
-                 It can be context-level representation, word-level representation,
-                 or both.
-        """
-        lstm_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-        hidden_state, final_state = tf.nn.dynamic_rnn(lstm_cell,
-                                                  embeddings,
-                                                  initial_state=initial_state,
-                                                  sequence_length=sequence_length,
-                                                  dtype=tf.float32)
-
-        return hidden_state, final_state
 
 class FFNN(object):
     def __init__(self, input_size, output_size, hidden_size):
