@@ -32,25 +32,6 @@ def lengths_to_masks(lengths, max_length):
     masks = tf.to_float(tf.to_int64(tiled_ranges) < tf.to_int64(lengths))
     return masks
 
-def masked_loss(logits, labels, mask):
-    masked_logits = tf.multiply(mask, logits)
-    return tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_logits, labels=labels))
-
-def batch_slice(params, indices):
-    """
-    Grabs a list of slices along the second axis in a tensor.
-
-    Similar to tf.gather(), but along axis=1.
-
-    arguments: params: A `Tensor` of params (batch_size, dim1, dim2, dim3 ...)
-               indices: Indices
-    returns:   masks: A `Tensor` of params (batch_size, dim2, dim3, ...)
-    """
-    dim_size = tf.shape(params)[1]
-    preds = tf.reshape(indices, [-1])
-    one_hots = tf.expand_dims(tf.one_hot(preds, dim_size), 2)
-    return tf.reduce_max(params * one_hots, axis=1)
-
 def get_optimizer(opt):
     if opt == "adam":
         optfn = tf.train.AdamOptimizer
@@ -134,10 +115,9 @@ class BiLSTMEncoder(object):
         with tf.variable_scope("Encoder"):
             lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
             lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
             hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
-                                                      embeddings_drop,
+                                                      embeddings,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
@@ -208,7 +188,7 @@ class Mixer(object):
     def __init__(self, config):
             self.config = config
 
-    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
+    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths, dropout_placeholder):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
 
         # Dimensionalities:
@@ -244,7 +224,7 @@ class Mixer(object):
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
+        D_C_d_drop = tf.nn.dropout(D_C_d, dropout_placeholder)
 
         with tf.variable_scope("Mixer"):
             U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
@@ -317,7 +297,7 @@ class Decoder(object):
                     decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
                     # Backward direction cell
                     decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, dropout_placeholder)
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
@@ -334,7 +314,7 @@ class Decoder(object):
                     decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
                     # Backward direction cell
                     decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, dropout_placeholder)
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
@@ -430,7 +410,7 @@ class HMNDecoder(object):
         highway_alpha = highway_maxout(embedding_size, maxout_size)
         highway_beta = highway_maxout(embedding_size, maxout_size)
 
-        cell = tf.contrib.rnn.BasicLSTMCell(embedding_size)
+        lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
 
         # u_s the embeddings of the start guess
         # u_e the embeddings of the end guess
@@ -438,23 +418,25 @@ class HMNDecoder(object):
         u_e = U[:,0,:]
 
         # set up initial state
-        h = None
+        h = (tf.zeros_like(u_s), tf.zeros_like(u_s))
 
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
                 if step > 0: scope.reuse_variables()
-                _, h = tf.contrib.rnn.static_rnn(cell, [tf.concat([u_s, u_e], 1)], initial_state=h, dtype=tf.float32)
+                _, h = lstm_dec(tf.concat([u_s, u_e], 1), h)
                 h_add = h[0] + h[1]
 
                 with tf.variable_scope('highway_alpha'):
                     alpha = highway_alpha(U, h_add, u_s, u_e)
-                    start_preds = tf.argmax(alpha, axis=1)
-                    u_s = batch_slice(U, start_preds)
+                    start_preds = tf.reshape(tf.argmax(alpha, axis=1), [-1])
+                    start_one_hots = tf.expand_dims(tf.one_hot(start_preds, max_context_length), 2)
+                    u_s = tf.reduce_max(U * start_one_hots, axis=1)
 
                 with tf.variable_scope('highway_beta'):
                     beta = highway_beta(U, h_add, u_s, u_e)
-                    end_preds = tf.argmax(beta, axis=1)
-                    u_e = batch_slice(U, end_preds)
+                    end_preds = tf.reshape(tf.argmax(beta, axis=1), [-1])
+                    end_one_hots = tf.expand_dims(tf.one_hot(end_preds, max_context_length), 2)
+                    u_e = tf.reduce_max(U * end_one_hots, axis=1)
 
         return tf.reshape(alpha, [-1, max_context_length]), tf.reshape(beta, [-1, max_context_length])
 
@@ -509,7 +491,7 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder, self.dropout_placeholder)
         self.start_prediction, self.end_prediction = self.decoder.decode(U, U_final, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
@@ -521,13 +503,19 @@ class QASystem(object):
 
         mask = lengths_to_masks(self.context_lengths_placeholder, self.config.output_size)
 
-        start_loss = masked_loss(self.start_prediction, self.answers_numeric_list[:, 0], mask)
-        end_loss = masked_loss(self.end_prediction, self.answers_numeric_list[:, 1], mask)
+        masked_start_preds = mask * self.start_prediction
+        masked_end_preds = mask * self.end_prediction
+
+        sparse_start_labels = self.answers_numeric_list[:, 0]
+        sparse_end_labels = self.answers_numeric_list[:, 1]
+
+        start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
+        end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
 
         L2_factor = self.config.regularization
         L2_loss = tf.add_n([tf.nn.l2_loss(tensor) for tensor in tf.trainable_variables() if 'weight' in tensor.name ]) * L2_factor
 
-        self.loss = start_loss + end_loss + L2_loss
+        self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss) + L2_loss
 
     def setup_embeddings(self):
         # jorisvanmens: looks up embeddings (code by Ilya)
@@ -537,6 +525,7 @@ class QASystem(object):
         """
         with vs.variable_scope("embeddings"):
             embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
+            embeddings_drop = tf.nn.dropout(embeddings, self.dropout_placeholder)
             self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
 
