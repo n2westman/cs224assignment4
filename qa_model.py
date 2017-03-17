@@ -454,7 +454,7 @@ class QASystem(object):
         self.mixer = mixer
         self.decoder = decoder
         self.config = config
-        self.pretrained_embeddings = np.load(embed_path)["glove"]
+        self.pretrained_embeddings = np.load((tf.gfile.GFile(embed_path))["glove"]
         self.model = model
 
         # ==== set up placeholder tokens ========
