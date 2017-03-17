@@ -508,9 +508,12 @@ class QASystem(object):
         """
         with vs.variable_scope("embeddings"):
             embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
-            embeddings_drop = tf.nn.dropout(embeddings, self.dropout_placeholder)
-            self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings_drop, self.question_placeholder)
-            self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings_drop, self.context_placeholder)
+            question_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings_drop, self.question_placeholder)
+            context_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings_drop, self.context_placeholder)
+            # Apply dropout to lookups
+            self.question_embeddings_lookup = tf.nn.dropout(question_embeddings_lookup_nodrop, self.dropout_placeholder)
+            self.context_embeddings_lookup = tf.nn.dropout(context_embeddings_lookup_nodrop, self.dropout_placeholder)
+
 
     def setup_train_op(self):
         optimizer = get_optimizer(self.config.optimizer)
