@@ -1,3 +1,8 @@
+try:
+    import google3
+except:
+    pass
+
 import tensorflow as tf
 
 def highway_maxout(hidden_size, pool_size):
