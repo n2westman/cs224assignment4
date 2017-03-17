@@ -401,7 +401,6 @@ class HMNDecoder(object):
         :return:
         """
 
-        batch_size = self.config.batch_size
         max_context_length = U.get_shape().as_list()[1]
         embedding_size = U.get_shape().as_list()[2]
 
@@ -412,12 +411,14 @@ class HMNDecoder(object):
         highway_beta = highway_maxout(embedding_size, maxout_size)
 
         lstm_dec = tf.contrib.rnn.BasicLSTMCell(embedding_size)
-        h = lstm_dec.zero_state(batch_size, tf.float32)
 
         # u_s the embeddings of the start guess
         # u_e the embeddings of the end guess
         u_s = U[:,0,:]
         u_e = U[:,0,:]
+
+        # set up initial state
+        h = (tf.zeros_like(u_s), tf.zeros_like(u_s))
 
         with tf.variable_scope("Decoder") as scope:
             for step in range(max_decode_steps):
@@ -437,7 +438,7 @@ class HMNDecoder(object):
                     end_one_hots = tf.expand_dims(tf.one_hot(end_preds, max_context_length), 2)
                     u_e = tf.reduce_max(U * end_one_hots, axis=1)
 
-        return tf.reshape(alpha, [batch_size, max_context_length]), tf.reshape(beta, [batch_size, max_context_length])
+        return tf.reshape(alpha, [-1, max_context_length]), tf.reshape(beta, [-1, max_context_length])
 
 class QASystem(object):
     def __init__(self, encoder, decoder, mixer, embed_path, config, model="baseline"):
@@ -457,11 +458,11 @@ class QASystem(object):
 
         # ==== set up placeholder tokens ========
 
-        self.question_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, None))
-        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
-        self.context_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size, self.config.output_size))
-        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(self.config.batch_size))
-        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(self.config.batch_size, 2))
+        self.question_placeholder = tf.placeholder(tf.int32, shape=(None, None))
+        self.questions_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
+        self.context_placeholder = tf.placeholder(tf.int32, shape=(None, self.config.output_size))
+        self.context_lengths_placeholder = tf.placeholder(tf.int32, shape=(None))
+        self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
         self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
         # ==== assemble pieces ====
