@@ -57,6 +57,7 @@ class Config:
         self.learning_rate = FLAGS.learning_rate
         self.max_gradient_norm = FLAGS.max_gradient_norm
         self.dropout = FLAGS.dropout
+        self.regularization = FLAGS.regularization
         self.batch_size = FLAGS.batch_size
         self.epochs = FLAGS.epochs
         self.state_size = FLAGS.state_size
@@ -512,7 +513,7 @@ class QASystem(object):
         start_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_start_preds, labels=sparse_start_labels)
         end_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(logits=masked_end_preds, labels=sparse_end_labels)
 
-        L2_factor = 0.001
+        L2_factor = self.config.regularization
         L2_loss = tf.add_n([tf.nn.l2_loss(tensor) for tensor in tf.trainable_variables() if 'weight' in tensor.name ]) * L2_factor
 
         self.loss = tf.reduce_mean(start_loss) + tf.reduce_mean(end_loss) + L2_loss
