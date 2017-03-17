@@ -134,10 +134,9 @@ class Encoder(object):
         with tf.variable_scope("Encoder"):
             lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
             lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_enc, forget_bias=1.0)
-            embeddings_drop = tf.nn.dropout(embeddings, self.config.dropout)
             hidden_state, final_state = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell,
                                                       lstm_bw_cell,
-                                                      embeddings_drop,
+                                                      embeddings,
                                                       initial_state_fw=initial_state_fw,
                                                       initial_state_bw=initial_state_bw,
                                                       sequence_length=sequence_length,
@@ -178,9 +177,9 @@ class Mixer(object):
     # jorisvanmens: creates coattention matrix from encoded question and context (code by Joris)
 
     def __init__(self, config):
-            self.config = config
+        self.config = config
 
-    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths):
+    def mix(self, bilstm_encoded_questions, bilstm_encoded_contexts, context_lengths, dropout_placeholder):
         # Compute the attention on each word in the context as a dot product of its contextual embedding and the query
 
         # Dimensionalities:
@@ -216,7 +215,7 @@ class Mixer(object):
         # U: samples x context_words x 2*n_hidden_mix
         C_d_transpose = tf.transpose(coattention_context_C_d, perm = [0, 2, 1])
         D_C_d = tf.concat([bilstm_encoded_contexts, C_d_transpose], 2)
-        D_C_d_drop = tf.nn.dropout(D_C_d, self.config.dropout)
+        D_C_d_drop = tf.nn.dropout(D_C_d, dropout_placeholder)
 
         with tf.variable_scope("Mixer"):
             U, U_final = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell, lstm_bw_cell, D_C_d_drop, sequence_length=context_lengths, dtype=tf.float32)
@@ -289,7 +288,7 @@ class Decoder(object):
                     decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
                     # Backward direction cell
                     decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, dropout_placeholder)
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
@@ -306,7 +305,7 @@ class Decoder(object):
                     decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
                     # Backward direction cell
                     decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
-                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, self.config.dropout)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, dropout_placeholder)
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
@@ -481,7 +480,7 @@ class QASystem(object):
         with tf.variable_scope("c"):
             bilstm_encoded_contexts, _ = self.encoder.encode(self.context_embeddings_lookup, self.context_lengths_placeholder, encoded_question_final_state)
 
-        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder)
+        U, U_final = self.mixer.mix(bilstm_encoded_questions, bilstm_encoded_contexts, self.context_lengths_placeholder, self.dropout_placeholder)
         self.start_prediction, self.end_prediction = self.decoder.decode(U, U_final, self.context_lengths_placeholder, self.dropout_placeholder)
 
 
@@ -509,8 +508,9 @@ class QASystem(object):
         """
         with vs.variable_scope("embeddings"):
             embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
-            self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
-            self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
+            embeddings_drop = tf.nn.dropout(embeddings, self.dropout_placeholder)
+            self.question_embeddings_lookup = tf.nn.embedding_lookup(embeddings_drop, self.question_placeholder)
+            self.context_embeddings_lookup = tf.nn.embedding_lookup(embeddings_drop, self.context_placeholder)
 
     def setup_train_op(self):
         optimizer = get_optimizer(self.config.optimizer)
