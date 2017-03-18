@@ -2,22 +2,32 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+try:
+    import google3
+    GOOGLE3 = True
+except ImportError:
+    GOOGLE3 = False
+
+if GOOGLE3:
+    from google3.experimental.users.ikuleshov.cs224n.qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+    from google3.experimental.users.ikuleshov.cs224n.data_utils import load_and_preprocess_dataset
+else:
+    from data_utils import load_and_preprocess_dataset
+    from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
+
 import os
 import json
 import sys
 import fileinput
+import logging
 
 import tensorflow as tf
 import numpy as np
 
-from data_utils import load_and_preprocess_dataset
-from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from os.path import join as pjoin
 from pdb import set_trace as t
 from itertools import izip
-from qa_data import PAD_ID
 
-import logging
 
 logging.basicConfig(level=logging.INFO)
 
@@ -45,13 +55,15 @@ tf.app.flags.DEFINE_integer("after_each_batch", 50, "Evaluate model after every 
 tf.app.flags.DEFINE_string("data_dir", "data/squad", "SQuAD directory (default ./data/squad)")
 tf.app.flags.DEFINE_string("train_dir", "train", "Training directory to save the model parameters (default: ./train).")
 tf.app.flags.DEFINE_string("load_train_dir", "", "Training directory to load model parameters from to resume training (default: {train_dir}).")
-tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
 tf.app.flags.DEFINE_string("optimizer", "adam", "adam / sgd")
 tf.app.flags.DEFINE_integer("print_every", 1, "How many iterations to do per print.")
 tf.app.flags.DEFINE_integer("keep", 0, "How many checkpoints to keep, 0 indicates keep all.")
 tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab file (default: ./data/squad/vocab.dat)")
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
+
+if not GOOGLE3:
+    tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -89,6 +101,9 @@ def get_normalized_train_dir(train_dir):
     if the location of the checkpoint files has moved, allowing usage with CodaLab.
     This must be done on both train.py and qa_answer.py in order to work.
     """
+    if not GOOGLE3:
+        return train_dir    
+
     global_train_dir = '/tmp/cs224n-squad-train'
     if os.path.exists(global_train_dir):
         os.unlink(global_train_dir)
@@ -122,13 +137,14 @@ def main(_):
 
     qa = QASystem(encoder, decoder, mixer, embed_path, config, FLAGS.model)
 
-    if not os.path.exists(FLAGS.log_dir):
-        os.makedirs(FLAGS.log_dir)
-    file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
-    logging.getLogger().addHandler(file_handler)
+    if not GOOGLE3:
+        if not os.path.exists(FLAGS.log_dir):
+            os.makedirs(FLAGS.log_dir)
+        file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
+        logging.getLogger().addHandler(file_handler)
 
     logging.info("Model parameters: %s" % vars(FLAGS))
-    with open(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
+    with tf.gfile.GFile(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
         json.dump(FLAGS.__flags, fout)
 
     with tf.Session() as sess:
