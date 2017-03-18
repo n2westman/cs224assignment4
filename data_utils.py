@@ -25,6 +25,44 @@ def open_dataset(dataset):
     questions, question_lengths, contexts, context_lengths = zip(*inputs)
     return questions, question_lengths, contexts, context_lengths, answers
 
+def process_data(data_list, max_length=None):
+    """
+    Processes a list of contexts or questions.
+
+    This will:
+    (1) Trim each sequence to max_length, if specified.
+    (2) Obtain the lengths of each sequence (up to max_length)
+    (3) Pad the sequence up to the max length.
+
+    """
+
+    if max_length is None:
+        max_length = max(map(len, data_list))
+
+    data_list = cap_sequences(data_list, max_length)
+    lengths = [len(x) for x in data_list]
+
+    pad_sequences(data_list, max_length)
+
+    return data_list, lengths
+
+def cap_sequences(sequences, max_length):
+    """
+    Trims a batch of sequences to a specified max_length.
+    """
+    return [x[:max_length] for x in sequences]
+
+def pad_sequences(sequences, max_length):
+    """
+    Pads a batch of sequences (in-place) to a specified max length.
+
+    TODO(nwestman): make this functional and not in-place
+
+    :return:
+    """
+    for sequence in sequences:
+        sequence.extend([str(PAD_ID)] * (max_length - len(sequence)))
+
 def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
     """
     Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
@@ -48,9 +86,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     # Definition of the dataset -- note definition appears in multiple places
     questions = []
-    question_lengths = []
     contexts = []
-    context_lengths = []
     answers = []
 
     # Parameters
@@ -60,7 +96,6 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     with tf.gfile.GFile(context_ids_file) as context_ids, \
          tf.gfile.GFile(question_ids_file) as question_ids, \
          tf.gfile.GFile(answer_span_file) as answer_spans:
-        max_question_length = 0
         for context, question, answer in izip(context_ids, question_ids, answer_spans):
             # Load raw context, question, answer from file
             context = context.split()
@@ -79,34 +114,22 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             if int(answer[1]) > (max_context_length - 1):
                 continue
 
-            # Trim context variables
-            context = context[:max_context_length]
-
             # Add datum to dataset
             questions.append(question)
-            question_lengths.append(len(question))
             contexts.append(context)
-            context_lengths.append(len(context))
             answers.append(answer)
-
-            # Track max question & context lengths for adding padding later on
-            if len(question) > max_question_length:
-                max_question_length = len(question)
 
             num_examples += 1
             if num_examples >= max_examples:
                 break;
 
-    # Add padding
-    for question in questions:
-        question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-    for context in contexts:
-        context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+    questions, question_lengths = process_data(questions)
+    contexts, context_lengths = process_data(contexts, max_context_length)
 
     dataset = zip(zip(questions, question_lengths, contexts, context_lengths), answers)
 
     logging.info("Dataset loaded with %s samples" % len(dataset))
-    logging.debug("Max question length: %s" % max_question_length)
+    logging.debug("Max question length: %s" % max(question_lengths))
     logging.debug("Max context length: %s" % max_context_length)
 
     return dataset
