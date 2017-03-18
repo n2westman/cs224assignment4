@@ -343,7 +343,7 @@ class Decoder(object):
             with tf.variable_scope("EndPredictor"):
                 end_ffnn = FFNN(n_hidden_mix, output_size, self.config.n_hidden_dec_base)
                 end_pred_tmp = end_ffnn.forward_prop(Ureshape, dropout_placeholder)
-                end_pred = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
+                end_pred = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
 
 
         elif USE_DECODER_VERSION == 2:
