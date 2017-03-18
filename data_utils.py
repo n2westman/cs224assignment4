@@ -14,8 +14,10 @@ import sys
 import logging
 import random
 import tensorflow as  tf
+import numpy as np
 
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from os.path import join as pjoin
