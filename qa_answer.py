@@ -14,7 +14,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from data_utils import split_in_batches
+from data_utils import split_in_batches, process_data
 from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
@@ -112,8 +112,8 @@ def read_dataset(dataset, tier, vocab):
                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
                 qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
 
-                context_data.append(' '.join(context_ids))
-                query_data.append(' '.join(qustion_ids))
+                context_data.append(context_ids)
+                query_data.append(qustion_ids)
                 question_uuid_data.append(question_uuid)
 
     return context_data, query_data, question_uuid_data
@@ -184,20 +184,6 @@ def get_normalized_train_dir(train_dir):
         os.makedirs(train_dir)
     os.symlink(os.path.abspath(train_dir), global_train_dir)
     return global_train_dir
-
-
-def process_data(data_list, max_length=None):
-    # 1: split the string
-    data_list = map(lambda x: x.split(), data_list)
-
-    # 2: Get max length if none
-    if max_length is None:
-        max_length = max(map(len, data_list))
-
-    lengths = [len(x) for x in data_list]
-
-    # 3: Cap lengths + pad
-    return map(lambda x: x[:max_length] + ([str(qa_data.PAD_ID)] * (max_length - len(x))), data_list), lengths
 
 def main(_):
 
