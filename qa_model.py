@@ -16,7 +16,7 @@ if GOOGLE3:
 else:
     from evaluate import exact_match_score, f1_score
     from contrib_ops import highway_maxout
-    from data_utils import open_dataset, split_in_batches
+    from data_utils import open_dataset, split_in_batches, make_prediction_plot
 
 import time
 import logging
@@ -713,6 +713,7 @@ class QASystem(object):
         """
 
         save_path = os.path.join(train_dir, self.model)
+        losses = []
 
         total_parameters = 0
         for variable in tf.trainable_variables():
@@ -733,6 +734,7 @@ class QASystem(object):
                 toc = time.time()
                 logging.info("Batch %s processed in %s seconds." % (str(idx), format(toc - tic, '.2f')))
                 logging.info("Training loss: %s" % format(loss, '.5f'))
+                losses.append(loss)
                 if (idx + 1) % self.config.batches_per_save == 0 or self.config.test:
                     logging.info("Saving model after batch %s" % str(idx))
                     tic = time.time()
@@ -746,6 +748,8 @@ class QASystem(object):
                     logging.info("Sample validation loss: %s" % format(valid_loss, '.5f'))
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
+
+            make_prediction_plot(losses, self.config.batch_size, epoch)
 
             logging.info("Evaluating current model..")
             _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))

@@ -15,6 +15,9 @@ import logging
 import random
 import tensorflow as  tf
 
+import matplotlib
+import matplotlib.pyplot as plt
+
 from os.path import join as pjoin
 from itertools import izip
 
@@ -139,3 +142,13 @@ def split_in_batches(questions, question_lengths, contexts, context_lengths, bat
 
     logging.info("Created %d batches" % len(batches))
     return batches
+
+def make_prediction_plot(losses, batch_size, epoch):
+    plt.subplot(2, 1, 1)
+    plt.title("Losses")
+    plt.plot(np.arange(len(losses)), losses, label="Loss")
+    plt.ylabel("Loss")
+
+    plt.xlabel("Minibatch (size %s)" % batch_size)
+    output_path = "Losses-Epoch-%s.png" % epoch
+    plt.savefig(output_path)
