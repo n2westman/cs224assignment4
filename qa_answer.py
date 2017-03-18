@@ -217,7 +217,7 @@ def main(_):
 
     config = Config(FLAGS)
     encoder = Encoder(config)
-    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4':
+    if FLAGS.model == 'baseline' or FLAGS.model == 'baseline-v2' or FLAGS.model == 'baseline-v3' or FLAGS.model == 'baseline-v4' or FLAGS.model == 'baseline-v5':
         decoder = Decoder(config)
     else:
         decoder = HMNDecoder(config)
