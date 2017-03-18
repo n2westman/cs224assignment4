@@ -14,8 +14,10 @@ import sys
 import logging
 import random
 import tensorflow as  tf
+import numpy as np
 
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from os.path import join as pjoin
@@ -105,8 +107,8 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             question = question.split()
             answer = answer.split()
 
-            # Don't use Qs / contexts that are too short
-            if len(context) < min_input_length or len(question) < min_input_length:
+            # Don't use contexts that are too short
+            if len(context) < min_input_length: # or len(question) < min_input_length:
                 continue
 
             # Don't use malformed answers
