@@ -14,6 +14,11 @@ import sys
 import logging
 import random
 import tensorflow as  tf
+import numpy as np
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 from os.path import join as pjoin
 from itertools import izip
@@ -29,6 +34,44 @@ def word2chars(word, max_word_length):
     word = [ord(x) for x in list(word[:max_word_length].lower()) ]
     word.extend([PAD_ID] * (max_word_length - len(word)))
     return word
+
+def process_data(data_list, max_length=None):
+    """
+    Processes a list of contexts or questions.
+
+    This will:
+    (1) Trim each sequence to max_length, if specified.
+    (2) Obtain the lengths of each sequence (up to max_length)
+    (3) Pad the sequence up to the max length.
+
+    """
+
+    if max_length is None:
+        max_length = max(map(len, data_list))
+
+    data_list = cap_sequences(data_list, max_length)
+    lengths = [len(x) for x in data_list]
+
+    pad_sequences(data_list, max_length)
+
+    return data_list, lengths
+
+def cap_sequences(sequences, max_length):
+    """
+    Trims a batch of sequences to a specified max_length.
+    """
+    return [x[:max_length] for x in sequences]
+
+def pad_sequences(sequences, max_length):
+    """
+    Pads a batch of sequences (in-place) to a specified max length.
+
+    TODO(nwestman): make this functional and not in-place
+
+    :return:
+    """
+    for sequence in sequences:
+        sequence.extend([str(PAD_ID)] * (max_length - len(sequence)))
 
 def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples, max_word_length, max_question_length):
     """
@@ -58,10 +101,8 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
     # Definition of the dataset -- note definition appears in multiple places
     questions = []
     question_tokens = []
-    question_lengths = []
     contexts = []
     context_tokens = []
-    context_lengths = []
     answers = []
 
     # Parameters
@@ -74,7 +115,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
          tf.gfile.GFile(question_tokens_file) as question_tokens_list, \
          tf.gfile.GFile(answer_span_file) as answer_spans:
 
-        for context, question, context_token, question_token, answer in izip(context_ids, question_ids, context_tokens_list, question_tokens_list, answer_spans):
+        for context, question, context_token, context_token, answer in izip(context_ids, question_ids, context_tokens_list, question_tokens_list, answer_spans):
             # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
@@ -82,8 +123,8 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
             question_token = question_token.split()
             answer = answer.split()
 
-            # Don't use Qs / contexts that are too short
-            if len(context) < min_input_length or len(question) < min_input_length:
+            # Don't use contexts that are too short
+            if len(context) < min_input_length: # or len(question) < min_input_length:
                 continue
 
             # Don't use malformed answers
@@ -94,38 +135,37 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
             if int(answer[1]) > (max_context_length - 1):
                 continue
 
-
             # Add datum to dataset
             question = question[:max_question_length]
-            question_token = question_token[:max_question_length]
             questions.append(question)
+            question_token = question_token[:max_question_length]
             question_tokens.append( [word2chars(word, max_word_length) for word in question_token])
-            question_lengths.append(len(question))
 
             context = context[:max_context_length]
-            context_token = context_token[:max_context_length]
             contexts.append(context)
+            context_token = context_token[:max_context_length]
             context_tokens.append( [word2chars(word, max_word_length) for word in context_token])
-            context_lengths.append(len(context))
+
             answers.append(answer)
 
             num_examples += 1
             if num_examples >= max_examples:
                 break;
 
-    # Add padding
-    for question, question_token in zip(questions, question_tokens):
-        question.extend([str(PAD_ID)] * (max_question_length - len(question)))
+    questions, question_lengths = process_data(questions)
+    contexts, context_lengths = process_data(contexts, max_context_length)
+
+    # TODO: use process_data()
+    for question_token in question_tokens:
         question_token.extend([ [PAD_ID] * max_word_length] * (max_question_length - len(question_token)))
 
-    for context, context_token in zip(contexts, context_tokens):
-        context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+    for context_token in context_tokens:
         context_token.extend([ [PAD_ID] * max_word_length] * (max_context_length - len(context_token)))
 
     dataset = zip(zip(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens), answers)
 
     logging.info("Dataset loaded with %s samples" % len(dataset))
-    logging.debug("Max question length: %s" % max_question_length)
+    logging.debug("Max question length: %s" % max(question_lengths))
     logging.debug("Max context length: %s" % max_context_length)
 
     return dataset
@@ -160,3 +200,13 @@ def split_in_batches(questions, question_lengths, contexts, context_lengths, que
 
     logging.info("Created %d batches" % len(batches))
     return batches
+
+def make_prediction_plot(losses, batch_size, epoch):
+    plt.subplot(2, 1, 1)
+    plt.title("Losses")
+    plt.plot(np.arange(len(losses)), losses, label="Loss")
+    plt.ylabel("Loss")
+
+    plt.xlabel("Minibatch (size %s)" % batch_size)
+    output_path = "Losses-Epoch-%s.png" % epoch
+    plt.savefig(output_path)
