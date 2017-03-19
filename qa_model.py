@@ -72,6 +72,27 @@ def get_optimizer(opt):
         assert (False)
     return optfn
 
+
+def conv1d(params, filters, kernel_length, dropout, scope):
+    with tf.variable_scope(scope):
+        layer = tf.layers.conv2d(params, filters, (1, kernel_length), activation=tf.nn.relu)
+        if dropout < 1.0:
+           params = tf.nn.dropout(params, dropout)
+        layer = tf.reduce_max(layer, 2) # Choose the best feature.
+        return layer
+
+def multi_conv1d(params, filters_list, kernel_lengths, padding,  dropout=1.0):
+    with tf.variable_scope("multi_conv1d"):
+        assert len(filters_list) == len(kernel_lengths)
+        outs = []
+        for filters, kernel_length in zip(filters_list, kernel_lengths):
+            if filters == 0:
+                continue
+            out = conv1d(params, filters, kernel_length, dropout, scope="conv1d_{}".format(kernel_length))
+            outs.append(out)
+
+        return tf.concat(outs, 2)
+
 # jorisvanmens: some of these might get overwritten in the relevant functions (would be good to fix)
 class Config:
     """Holds model hyperparams and data information.
@@ -80,7 +101,6 @@ class Config:
     information parameters. Model objects are passed a Config() object at
     instantiation.
     """
-
 
     def __init__(self, FLAGS):
         self.test = FLAGS.test
@@ -113,6 +133,14 @@ class Config:
         self.vocab_path = FLAGS.vocab_path
         self.embed_path = FLAGS.embed_path
         self.model = FLAGS.model
+        self.max_question_length = FLAGS.max_question_length
+        self.max_word_length = FLAGS.max_word_length
+        self.char_out_size = FLAGS.char_out_size
+        self.char_emb_size = FLAGS.char_emb_size
+        self.char_vocab_size = FLAGS.char_vocab_size
+        self.filters_list = list(map(int, FLAGS.filters_list.split(',')))
+        self.kernel_lengths = list(map(int, FLAGS.kernel_lengths.split(',')))
+        self.use_char_cnn_embedding = bool(FLAGS.use_char_cnn_embedding)
 
 class Encoder(object):
     # jorisvanmens: encodes question and context using a BiLSTM (code by Ilya)
@@ -529,6 +557,12 @@ class QASystem(object):
         self.answers_numeric_list = tf.placeholder(tf.int32, shape=(None, 2))
         self.dropout_placeholder = tf.placeholder(tf.float32, shape=())
 
+        # context character embedding: batch, max context size in words, max_word_length
+        self.context_tokens_placeholder = tf.placeholder(tf.int32, shape=[None, None, self.config.max_word_length])
+        # question character embedding: batch, max question size in words, max_word_length
+        self.question_tokens_placeholder = tf.placeholder(tf.int32, shape=[None, None, self.config.max_word_length])
+
+
         # ==== assemble pieces ====
         with tf.variable_scope("qa", initializer=tf.uniform_unit_scaling_initializer(1.0)):
             self.setup_embeddings()
@@ -581,6 +615,55 @@ class QASystem(object):
         Loads distributed word representations based on placeholder tokens
         :return:
         """
+        with tf.variable_scope("char_cnn_embeddings"):
+            initializer = tf.contrib.layers.xavier_initializer()
+            char_emb_mat = tf.get_variable(
+                "character_embeddings",
+                shape=[self.config.char_vocab_size, self.config.char_emb_size],
+                dtype=tf.float32,
+                initializer=initializer
+                )
+            context_char_embedding_lookup = tf.nn.embedding_lookup(char_emb_mat, self.context_tokens_placeholder) # [batches, context, words, characters]
+            question_char_embedding_lookup = tf.nn.embedding_lookup(char_emb_mat, self.question_tokens_placeholder)  # [batches, questions, words, characters]
+
+            context_char_embedding_lookup = tf.reshape(
+                context_char_embedding_lookup,
+                [-1, self.config.output_size, self.config.max_word_length, self.config.char_emb_size]
+                )
+
+            question_char_embedding_lookup = tf.reshape(
+                question_char_embedding_lookup,
+                [-1, self.config.max_question_length, self.config.max_word_length, self.config.char_emb_size]
+                )
+
+            with tf.variable_scope('context_conv'):
+                context_char_embedding = multi_conv1d(
+                    context_char_embedding_lookup,
+                    self.config.filters_list,
+                    self.config.kernel_lengths,
+                    self.config.dropout
+                    )
+
+            with tf.variable_scope('question_conv'):
+                question_char_embedding = multi_conv1d(
+                    question_char_embedding_lookup,
+                    self.config.filters_list,
+                    self.config.kernel_lengths,
+                    self.config.dropout
+                    )
+
+            # context, sentence, word, char output size
+            context_char_embedding = tf.reshape(
+                context_char_embedding,
+                [-1, self.config.output_size, self.config.char_out_size]
+                )
+            # context, word, char output size
+            question_char_embedding = tf.reshape(
+                question_char_embedding,
+                [-1, self.config.max_question_length, self.config.char_out_size]
+                )
+
+
         with tf.variable_scope("embeddings"):
             initializer = tf.contrib.layers.xavier_initializer()
             embeddings_special_tokens = tf.get_variable('special_tokens', shape=(3, self.config.embedding_size), initializer=initializer, dtype=tf.float32)
@@ -590,10 +673,17 @@ class QASystem(object):
 
             question_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             context_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
-            # Apply dropout to lookups
-            self.question_embeddings_lookup = tf.nn.dropout(question_embeddings_lookup_nodrop, self.dropout_placeholder)
-            self.context_embeddings_lookup = tf.nn.dropout(context_embeddings_lookup_nodrop, self.dropout_placeholder)
 
+            # Apply dropout to lookups
+
+        if self.config.use_char_cnn_embedding:
+            logging.info("Using Char-CNN embedding layer plus Glove vectors.")
+            self.question_embeddings_lookup = tf.concat( [question_embeddings_lookup, question_char_embedding], 2)
+            self.context_embeddings_lookup =  tf.concat( [context_embeddings_lookup, context_char_embedding], 2)
+        else:
+            logging.info("Using Glove vectors (Char-CNN embedding disabled).")
+            self.question_embeddings_lookup = question_embeddings_lookup
+            self.context_embeddings_lookup = context_embeddings_lookup
 
     def setup_train_op(self):
         optimizer = get_optimizer(self.config.optimizer)
@@ -695,8 +785,8 @@ class QASystem(object):
         # cap number of samples
         dataset = dataset[:sample]
 
-        questions, question_lengths, contexts, context_lengths, answers = open_dataset(dataset)
-        data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
+        questions, question_lengths, contexts, context_lengths, question_tokens, answer_tokens, answers = open_dataset(dataset)
+        data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, answer_tokens, self.config.batch_size, answers=answers)
 
         for batch_idx, (test_batch_x, test_batch_y) in enumerate(data_batches):
             logging.info("Evaluating batch %s of %s" % (batch_idx, len(data_batches)))
@@ -741,8 +831,10 @@ class QASystem(object):
         """
         feed_dict = {
             self.question_placeholder: batch_x['questions'],
+            self.question_tokens_placeholder: batch_x['question_tokens'],
             self.questions_lengths_placeholder: batch_x['question_lengths'],
             self.context_placeholder: batch_x['contexts'],
+            self.context_tokens_placeholder: batch_x['context_tokens'],
             self.context_lengths_placeholder: batch_x['context_lengths'],
             self.dropout_placeholder: dropout
         }
@@ -791,8 +883,8 @@ class QASystem(object):
         for epoch in xrange(self.config.epochs):
             logging.info("Starting epoch %d", epoch)
             random.shuffle(dataset['train']) # Make sure to shuffle the dataset.
-            questions, question_lengths, contexts, context_lengths, answers = open_dataset(dataset['train'])
-            data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, self.config.batch_size, answers=answers)
+            questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens, answers = open_dataset(dataset['train'])
+            data_batches = split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens, self.config.batch_size, answers=answers)
             for idx, (batch_x, batch_y) in enumerate(data_batches):
                 tic = time.time()
                 loss = self.optimize(session, batch_x, batch_y)
