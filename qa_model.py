@@ -273,7 +273,9 @@ class Decoder(object):
         U = coattention_encoding
         U_final = coattention_encoding_final_states
 
-        if self.config.model == "baseline-v4":
+        if self.config.model == "baseline-v5":
+            USE_DECODER_VERSION = 5
+        elif self.config.model == "baseline-v4":
             USE_DECODER_VERSION = 4
         elif self.config.model == "baseline-v3":
             USE_DECODER_VERSION = 3
@@ -282,15 +284,13 @@ class Decoder(object):
         logging.info("Using decoder version %d" % USE_DECODER_VERSION)
 
 
-        if USE_DECODER_VERSION == 4:
-            # Similar to BiDAF paper
-            # For start_pred, just use a vector (like V2)
-            # For end_pred, adding an additional BiLSTM
-
-            weights_shape = (n_hidden_mix, 1)
+        if USE_DECODER_VERSION == 5:
+            # Similar to V4, but also pass a one-hot for the start prediction to the end predictor
+            weights_shape = (self.config.n_hidden_dec_base * 2, 1)
+            
             #bnew_shape = (1)
 
-            Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+            #Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
 
             initializer = tf.contrib.layers.xavier_initializer()
 
@@ -306,10 +306,67 @@ class Decoder(object):
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
                 weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                decoder_bilstm_output_reshape = tf.reshape(decoder_bilstm_output, [-1, 2 * self.config.n_hidden_dec_base])
                 start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
                 start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
-                start_pred = start_pred_tmp2# + bnew
+                start_pred = start_pred_tmp2
+                #self.start_pred = start_pred # Needed for
+
+            with tf.variable_scope("EndPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    
+                    # Create one hots for the start prediction
+                    start_pred_answer = tf.argmax(start_pred, 1) # samples x 1
+                    start_pred_answer_expand = tf.expand_dims(start_pred_answer, 1) # samples x 1 x 1
+                    start_pred_answer_onehot = tf.one_hot(start_pred_answer_expand, self.config.output_size, axis = 1) # samples x context_words x 1
+
+                    # Concatenate them to the coattention matrix
+                    coattention_plus_start_pred = tf.concat((coattention_encoding, start_pred_answer_onehot), 2) # samples x context_words x (2*n_hidden_mix+1)
+
+                    coattention_plus_start_pred_drop = tf.nn.dropout(coattention_plus_start_pred, dropout_placeholder)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_plus_start_pred_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(decoder_bilstm_output, [-1, 2 * self.config.n_hidden_dec_base])
+                end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
+                end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
+                end_pred = end_pred_tmp2# + bnew
+
+
+        elif USE_DECODER_VERSION == 4:
+            # Similar to BiDAF paper
+            # For start_pred, just use a vector (like V2)
+            # For end_pred, adding an additional BiLSTM
+
+            weights_shape = (self.config.n_hidden_dec_base * 2, 1)
+            #bnew_shape = (1)
+
+            #Ureshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+
+            initializer = tf.contrib.layers.xavier_initializer()
+
+            with tf.variable_scope("StartPredictor"):
+                with tf.variable_scope("DecoderBiLSTM"):
+                    # Forward direction cell
+                    decoder_lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    # Backward direction cell
+                    decoder_lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_dec_base, forget_bias=1.0)
+                    coattention_encoding_drop = tf.nn.dropout(coattention_encoding, dropout_placeholder)
+                    decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
+                        sequence_length=context_lengths, dtype=tf.float32)
+                    decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+                weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
+                #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
+                decoder_bilstm_output_reshape = tf.reshape(decoder_bilstm_output, [-1, 2 * self.config.n_hidden_dec_base])
+                start_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
+                start_pred_tmp2 = tf.reshape(start_pred_tmp, [-1, self.config.output_size])
+                start_pred = start_pred_tmp2# samples x context_words
 
             with tf.variable_scope("EndPredictor"):
                 with tf.variable_scope("DecoderBiLSTM"):
@@ -323,7 +380,7 @@ class Decoder(object):
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
                 weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
-                decoder_bilstm_output_reshape = tf.reshape(U, [-1, 2 * self.config.n_hidden_mix])
+                decoder_bilstm_output_reshape = tf.reshape(decoder_bilstm_output, [-1, 2 * self.config.n_hidden_dec_base])
                 end_pred_tmp = tf.matmul(decoder_bilstm_output_reshape, weights)# + bnew
                 end_pred_tmp2 = tf.reshape(end_pred_tmp, [-1, self.config.output_size])
                 end_pred = end_pred_tmp2# + bnew
