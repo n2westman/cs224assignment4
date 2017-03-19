@@ -65,7 +65,7 @@ def initialize_vocabulary(vocabulary_path):
         raise ValueError("Vocabulary file %s not found.", vocabulary_path)
 
 
-def process_glove_optimized(args, vocab, save_path, size=4e5, random_init=True):
+def process_glove_optimized(args, vocab, save_path, random_init=True):
     """
     :param vocab_list: [vocab]
     :return:
@@ -78,7 +78,7 @@ def process_glove_optimized(args, vocab, save_path, size=4e5, random_init=True):
             glove = np.zeros((len(vocab), args.glove_dim))
         found = 0
         with open(glove_path, 'r') as fh:
-            for line in tqdm(fh, total=size):
+            for line in tqdm(fh): #, total=len(vocab)):
                 array = line.lstrip().rstrip().split(" ")
                 word = array[0]
                 vector = list(map(float, array[1:]))
@@ -86,14 +86,14 @@ def process_glove_optimized(args, vocab, save_path, size=4e5, random_init=True):
                     idx = vocab[word]
                     glove[idx, :] = vector
                     found += 1
-                if word.capitalize() in vocab:
-                    idx = vocab[word.capitalize()]
-                    glove[idx, :] = vector
-                    found += 1
-                if word.upper() in vocab:
-                    idx = vocab[word.upper()]
-                    glove[idx, :] = vector
-                    found += 1
+                #if word.capitalize() in vocab:
+                #    idx = vocab[word.capitalize()]
+                #    glove[idx, :] = vector
+                #    found += 1
+                #if word.upper() in vocab:
+                #    idx = vocab[word.upper()]
+                #    glove[idx, :] = vector
+                #    found += 1
 
         print("{}/{} of word vocab have corresponding vectors in {}".format(found, len(vocab), glove_path))
         np.savez_compressed(save_path, glove=glove)
@@ -129,6 +129,7 @@ def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
                     glove[idx, :] = vector
                     found += 1
 
+        t()
         print("{}/{} of word vocab have corresponding vectors in {}".format(found, len(vocab_list), glove_path))
         np.savez_compressed(save_path, glove=glove)
         print("saved trimmed glove matrix at: {}".format(save_path))
