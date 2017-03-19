@@ -115,7 +115,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
          tf.gfile.GFile(question_tokens_file) as question_tokens_list, \
          tf.gfile.GFile(answer_span_file) as answer_spans:
 
-        for context, question, context_token, context_token, answer in izip(context_ids, question_ids, context_tokens_list, question_tokens_list, answer_spans):
+        for context, question, context_token, question_token, answer in izip(context_ids, question_ids, context_tokens_list, question_tokens_list, answer_spans):
             # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
@@ -152,7 +152,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
             if num_examples >= max_examples:
                 break;
 
-    questions, question_lengths = process_data(questions)
+    questions, question_lengths = process_data(questions, max_question_length)
     contexts, context_lengths = process_data(contexts, max_context_length)
 
     # TODO: use process_data()
