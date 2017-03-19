@@ -14,6 +14,7 @@ import re
 import tarfile
 import argparse
 from os.path import join as pjoin
+from pdb import set_trace as t
 
 from six.moves import urllib
 
@@ -63,6 +64,40 @@ def initialize_vocabulary(vocabulary_path):
     else:
         raise ValueError("Vocabulary file %s not found.", vocabulary_path)
 
+def process_glove_optimized(args, vocab, save_path, random_init=True):
+    """
+    :param vocab_list: [vocab]
+    :return:
+    """
+    if not tf.gfile.Exists(save_path + ".npz"):
+        glove_path = os.path.join(args.glove_dir, "glove.6B.{}d.txt".format(args.glove_dim))
+        if random_init:
+            glove = np.random.randn(len(vocab), args.glove_dim)
+        else:
+            glove = np.zeros((len(vocab), args.glove_dim))
+        found = 0
+        with open(glove_path, 'r') as fh:
+            for line in tqdm(fh): #, total=len(vocab)):
+                array = line.lstrip().rstrip().split(" ")
+                word = array[0]
+                vector = list(map(float, array[1:]))
+                if word in vocab:
+                    idx = vocab[word]
+                    glove[idx, :] = vector
+                    found += 1
+                #if word.capitalize() in vocab:
+                #    idx = vocab[word.capitalize()]
+                #    glove[idx, :] = vector
+                #    found += 1
+                #if word.upper() in vocab:
+                #    idx = vocab[word.upper()]
+                #    glove[idx, :] = vector
+                #    found += 1
+
+        print("{}/{} of word vocab have corresponding vectors in {}".format(found, len(vocab), glove_path))
+        np.savez_compressed(save_path, glove=glove)
+        print("saved trimmed glove matrix at: {}".format(save_path))
+
 def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
     """
     :param vocab_list: [vocab]
@@ -97,6 +132,26 @@ def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
         np.savez_compressed(save_path, glove=glove)
         print("saved trimmed glove matrix at: {}".format(save_path))
 
+
+def create_vocabulary_nontrimmed(vocabulary_path, glove_path, tokenizer=None):
+    # Creates a dataset that's not trimmed
+    # Code by jorisvanmens
+    if not tf.gfile.Exists(vocabulary_path):
+        print("Creating vocabulary %s from data %s" % (vocabulary_path, str(glove_path)))
+        vocab = []
+        with open(glove_path, mode="rb") as f:
+            counter = 0
+            for line in f:
+                counter += 1
+                if counter % 100000 == 0:
+                    print("processing line %d" % counter)
+                word = line.split(' ', 1)[0]
+                vocab.append(word)
+        vocab_list = _START_VOCAB + vocab
+        print("Vocabulary size: %d" % len(vocab_list))
+        with tf.gfile.GFile(vocabulary_path, mode="wb") as vocab_file:
+            for w in vocab_list:
+                vocab_file.write(w + b"\n")
 
 def create_vocabulary(vocabulary_path, data_paths, tokenizer=None):
     if not tf.gfile.Exists(vocabulary_path):
@@ -154,18 +209,24 @@ if __name__ == '__main__':
     valid_path = pjoin(args.source_dir, "val")
     dev_path = pjoin(args.source_dir, "dev")
 
-    create_vocabulary(vocab_path,
-                      [pjoin(args.source_dir, "train.context"),
-                       pjoin(args.source_dir, "train.question"),
-                       pjoin(args.source_dir, "val.context"),
-                       pjoin(args.source_dir, "val.question")])
+    glove_path = os.path.join(args.glove_dir, "glove.6B.{}d.txt".format(args.glove_dim))
+    create_vocabulary_nontrimmed(vocab_path, glove_path)
+
+    #create_vocabulary(vocab_path,
+    #                  [pjoin(args.source_dir, "train.context"),
+    #                   pjoin(args.source_dir, "train.question"),
+    #                   pjoin(args.source_dir, "val.context"),
+    #                   pjoin(args.source_dir, "val.question")])
     vocab, rev_vocab = initialize_vocabulary(pjoin(args.vocab_dir, "vocab.dat"))
 
     # ======== Trim Distributed Word Representation =======
     # If you use other word representations, you should change the code below
 
-    process_glove(args, rev_vocab, args.source_dir + "/glove.trimmed.{}".format(args.glove_dim),
+    process_glove_optimized(args, vocab, args.source_dir + "/glove.trimmed.{}".format(args.glove_dim),
                   random_init=args.random_init)
+
+    #process_glove(args, rev_vocab, args.source_dir + "/glove.trimmed.{}".format(args.glove_dim),
+    #              random_init=args.random_init)
 
     # ======== Creating Dataset =========
     # We created our data files seperately
