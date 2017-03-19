@@ -129,7 +129,6 @@ def process_glove(args, vocab_list, save_path, size=4e5, random_init=True):
                     glove[idx, :] = vector
                     found += 1
 
-        t()
         print("{}/{} of word vocab have corresponding vectors in {}".format(found, len(vocab_list), glove_path))
         np.savez_compressed(save_path, glove=glove)
         print("saved trimmed glove matrix at: {}".format(save_path))
