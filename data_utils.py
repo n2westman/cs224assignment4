@@ -22,10 +22,15 @@ logging.basicConfig(level=logging.INFO)
 
 def open_dataset(dataset):
     inputs, answers = zip(*dataset)
-    questions, question_lengths, contexts, context_lengths = zip(*inputs)
-    return questions, question_lengths, contexts, context_lengths, answers
+    questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens = zip(*inputs)
+    return questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens,answers
 
-def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples):
+def word2chars(word, max_word_length):
+    word = [ord(x) for x in list(word[:max_word_length].lower()) ]
+    word.extend([PAD_ID] * (max_word_length - len(word)))
+    return word
+
+def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples, max_word_length, max_question_length):
     """
     Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
     Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
@@ -40,16 +45,22 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
     logging.info("Loading dataset: %s " % dataset)
     context_ids_file = os.path.join(path, dataset + ".ids.context")
     question_ids_file = os.path.join(path, dataset + ".ids.question")
+    context_tokens_file = os.path.join(path, dataset + ".context")
+    question_tokens_file = os.path.join(path, dataset + ".question")
     answer_span_file = os.path.join(path, dataset + ".span")
 
     assert tf.gfile.Exists(context_ids_file)
     assert tf.gfile.Exists(question_ids_file)
+    assert tf.gfile.Exists(context_tokens_file)
+    assert tf.gfile.Exists(question_tokens_file)
     assert tf.gfile.Exists(answer_span_file)
 
     # Definition of the dataset -- note definition appears in multiple places
     questions = []
+    question_tokens = []
     question_lengths = []
     contexts = []
+    context_tokens = []
     context_lengths = []
     answers = []
 
@@ -59,12 +70,16 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     with tf.gfile.GFile(context_ids_file) as context_ids, \
          tf.gfile.GFile(question_ids_file) as question_ids, \
+         tf.gfile.GFile(context_tokens_file) as context_tokens_list, \
+         tf.gfile.GFile(question_tokens_file) as question_tokens_list, \
          tf.gfile.GFile(answer_span_file) as answer_spans:
-        max_question_length = 0
-        for context, question, answer in izip(context_ids, question_ids, answer_spans):
+
+        for context, question, context_token, question_token, answer in izip(context_ids, question_ids, context_tokens_list, question_tokens_list, answer_spans):
             # Load raw context, question, answer from file
             context = context.split()
             question = question.split()
+            context_token = context_token.split()
+            question_token = question_token.split()
             answer = answer.split()
 
             # Don't use Qs / contexts that are too short
@@ -79,31 +94,35 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
             if int(answer[1]) > (max_context_length - 1):
                 continue
 
-            # Trim context variables
-            context = context[:max_context_length]
 
             # Add datum to dataset
+            question = question[:max_question_length]
+            question_token = question_token[:max_question_length]
             questions.append(question)
+            question_tokens.append( [word2chars(word, max_word_length) for word in question_token])
             question_lengths.append(len(question))
+
+            context = context[:max_context_length]
+            context_token = context_token[:max_context_length]
             contexts.append(context)
+            context_tokens.append( [word2chars(word, max_word_length) for word in context_token])
             context_lengths.append(len(context))
             answers.append(answer)
-
-            # Track max question & context lengths for adding padding later on
-            if len(question) > max_question_length:
-                max_question_length = len(question)
 
             num_examples += 1
             if num_examples >= max_examples:
                 break;
 
     # Add padding
-    for question in questions:
+    for question, question_token in zip(questions, question_tokens):
         question.extend([str(PAD_ID)] * (max_question_length - len(question)))
-    for context in contexts:
-        context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+        question_token.extend([ [PAD_ID] * max_word_length] * (max_question_length - len(question_token)))
 
-    dataset = zip(zip(questions, question_lengths, contexts, context_lengths), answers)
+    for context, context_token in zip(contexts, context_tokens):
+        context.extend([str(PAD_ID)] * (max_context_length - len(context)))
+        context_token.extend([ [PAD_ID] * max_word_length] * (max_context_length - len(context_token)))
+
+    dataset = zip(zip(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens), answers)
 
     logging.info("Dataset loaded with %s samples" % len(dataset))
     logging.debug("Max question length: %s" % max_question_length)
@@ -111,7 +130,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples)
 
     return dataset
 
-def split_in_batches(questions, question_lengths, contexts, context_lengths, batch_size, answers=None, question_uuids=None):
+def split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens, batch_size, answers=None, question_uuids=None):
     """
     Splits a dataset into batches, each of batch_size.
     """
@@ -119,8 +138,10 @@ def split_in_batches(questions, question_lengths, contexts, context_lengths, bat
     for start_index in range(0, len(questions), batch_size):
         batch_x = {
             'questions': questions[start_index:start_index + batch_size],
+            'question_tokens': question_tokens[start_index:start_index + batch_size],
             'question_lengths': question_lengths[start_index:start_index + batch_size],
             'contexts': contexts[start_index:start_index + batch_size],
+            'context_tokens': context_tokens[start_index:start_index + batch_size],
             'context_lengths': context_lengths[start_index:start_index + batch_size],
         }
         if answers is not None:

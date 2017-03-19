@@ -62,6 +62,17 @@ tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab 
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
 
+# Char CNN parameters
+tf.app.flags.DEFINE_string("filters_list", "100", "Out channel dims (number of filters), separated by commas")
+tf.app.flags.DEFINE_string("kernel_lengths", "5", "Kernel (filter) heights, separated by commas")
+tf.app.flags.DEFINE_integer("max_question_length", 30, "Maximum quesion size in words.")
+tf.app.flags.DEFINE_integer("max_word_length", 30, "Maximum size of a word in characters.")
+tf.app.flags.DEFINE_integer("char_out_size", 100, "Char-CNN output size")
+tf.app.flags.DEFINE_integer("char_emb_size", 8, "Character embedding size.")
+tf.app.flags.DEFINE_integer("char_vocab_size", 250, "Characters vocab count (should span from min to max odrinal value of each char in dataset.")
+tf.app.flags.DEFINE_boolean("use_char_cnn_embedding", False, "Use character level convolutional embedding.")
+
+
 if not GOOGLE3:
     tf.app.flags.DEFINE_string("log_dir", "log", "Path to store log and flag files (default: ./log)")
 
@@ -119,8 +130,8 @@ def main(_):
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
     dataset = {
-        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_examples=FLAGS.max_examples),
-        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_examples=FLAGS.max_examples)
+        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples),
+        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples)
     }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
