@@ -14,7 +14,7 @@ import numpy as np
 from six.moves import xrange
 import tensorflow as tf
 
-from data_utils import split_in_batches, process_data
+from data_utils import split_in_batches, process_data, word2chars
 from qa_model import Encoder, QASystem, Decoder, HMNDecoder, Mixer, Config
 from preprocessing.squad_preprocess import data_from_json, maybe_download, squad_base_url, \
     invert_map, tokenize, token_idx_map
@@ -58,6 +58,16 @@ tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embeddin
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
 
+# Char CNN parameters
+tf.app.flags.DEFINE_string("filters_list", "100", "Out channel dims (number of filters), separated by commas")
+tf.app.flags.DEFINE_string("kernel_lengths", "5", "Kernel (filter) heights, separated by commas")
+tf.app.flags.DEFINE_integer("max_question_length", 30, "Maximum quesion size in words.")
+tf.app.flags.DEFINE_integer("max_word_length", 30, "Maximum size of a word in characters.")
+tf.app.flags.DEFINE_integer("char_out_size", 100, "Char-CNN output size")
+tf.app.flags.DEFINE_integer("char_emb_size", 8, "Character embedding size.")
+tf.app.flags.DEFINE_integer("char_vocab_size", 250, "Characters vocab count (should span from min to max odrinal value of each char in dataset.")
+tf.app.flags.DEFINE_boolean("use_char_cnn_embedding", False, "Use character level convolutional embedding.")
+
 def initialize_model(session, model, train_dir):
     ckpt = tf.train.get_checkpoint_state(train_dir)
     v2_path = ckpt.model_checkpoint_path + ".index" if ckpt else ""
@@ -89,7 +99,9 @@ def read_dataset(dataset, tier, vocab):
     of questions and answers processed for the dataset"""
 
     context_data = []
+    context_data_chars = []
     query_data = []
+    query_data_chars = []
     question_uuid_data = []
 
     for articles_id in tqdm(range(len(dataset['data'])), desc="Preprocessing {}".format(tier)):
@@ -110,13 +122,19 @@ def read_dataset(dataset, tier, vocab):
                 question_uuid = qas[qid]['id']
 
                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
+                context_chars = [word2chars(w, FLAGS.max_word_length) for w in context_tokens]
+    
+
                 qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
+                question_chars = [word2chars(w, FLAGS.max_word_length) for w in question_tokens]
 
                 context_data.append(context_ids)
+                context_data_chars.append(context_chars)
                 query_data.append(qustion_ids)
+                query_data_chars.append( question_chars )
                 question_uuid_data.append(question_uuid)
 
-    return context_data, query_data, question_uuid_data
+    return context_data, query_data, context_data_chars, query_data_chars, question_uuid_data
 
 
 def prepare_dev(prefix, dev_filename, vocab):
@@ -124,9 +142,9 @@ def prepare_dev(prefix, dev_filename, vocab):
     dev_dataset = maybe_download(squad_base_url, dev_filename, prefix)
 
     dev_data = data_from_json(os.path.join(prefix, dev_filename))
-    context_data, question_data, question_uuid_data = read_dataset(dev_data, 'dev', vocab)
+    context_data, question_data, context_data_chars, query_data_chars, question_uuid_data = read_dataset(dev_data, 'dev', vocab)
 
-    return context_data, question_data, question_uuid_data
+    return context_data, question_data, context_data_chars, query_data_chars, question_uuid_data
 
 
 def generate_answers(sess, model, dataset, rev_vocab):
@@ -150,10 +168,10 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     answers = {}
 
-    contexts, context_lengths, questions, question_lengths, question_uuids = dataset
+    contexts, context_lengths, questions, question_lengths, question_tokens, answer_tokens, question_uuids = dataset
     counter = 0
 
-    batches = split_in_batches(questions, question_lengths, contexts, context_lengths, FLAGS.batch_size, question_uuids=question_uuids)
+    batches = split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, answer_tokens, FLAGS.batch_size, question_uuids=question_uuids)
 
     for batch_x, batch_uuids in batches:
         counter += 1
@@ -205,12 +223,19 @@ def main(_):
 
     dev_dirname = os.path.dirname(os.path.abspath(FLAGS.dev_path))
     dev_filename = os.path.basename(FLAGS.dev_path)
-    context_data, question_data, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
+    context_data, question_data, context_data_chars, question_data_chars, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
 
     context_data, context_lengths = process_data(context_data, FLAGS.output_size)
-    question_data, question_lengths = process_data(question_data)
+    question_data, question_lengths = process_data(question_data, FLAGS.max_question_length)
 
-    dataset = (context_data, context_lengths, question_data, question_lengths, question_uuid_data)
+    # TODO: use process_data()
+    for question_token in question_data_chars:
+        question_token.extend([ [qa_data.PAD_ID] * FLAGS.max_word_length] * (FLAGS.max_question_length - len(question_token)))
+
+    for context_token in context_data_chars:
+        context_token.extend([ [qa_data.PAD_ID] * FLAGS.max_word_length] * (FLAGS.output_size - len(context_token)))
+
+    dataset = (context_data, context_lengths, question_data, question_lengths, question_data_chars, context_data_chars, question_uuid_data)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
