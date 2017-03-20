@@ -671,8 +671,8 @@ class QASystem(object):
             embeddings = tf.concat([embeddings_special_tokens, embeddings_words], 0)
             #embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
 
-            question_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
-            context_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
+            question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
+            context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
 
             # Apply dropout to lookups
 

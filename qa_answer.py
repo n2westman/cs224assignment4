@@ -131,7 +131,7 @@ def read_dataset(dataset, tier, vocab):
                 context_data.append(context_ids)
                 context_data_chars.append(context_chars)
                 query_data.append(qustion_ids)
-                query_data_chars.append( question_chars )
+                query_data_chars.append(question_chars)
                 question_uuid_data.append(question_uuid)
 
     return context_data, query_data, context_data_chars, query_data_chars, question_uuid_data

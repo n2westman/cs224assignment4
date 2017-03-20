@@ -112,7 +112,7 @@ def get_normalized_train_dir(train_dir):
     if the location of the checkpoint files has moved, allowing usage with CodaLab.
     This must be done on both train.py and qa_answer.py in order to work.
     """
-    if not GOOGLE3:
+    if GOOGLE3:
         return train_dir    
 
     global_train_dir = '/tmp/cs224n-squad-train'

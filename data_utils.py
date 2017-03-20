@@ -202,6 +202,9 @@ def split_in_batches(questions, question_lengths, contexts, context_lengths, que
     return batches
 
 def make_prediction_plot(losses, batch_size, epoch):
+    if GOOGLE3:
+        return
+
     plt.subplot(2, 1, 1)
     plt.title("Losses")
     plt.plot(np.arange(len(losses)), losses, label="Loss")
