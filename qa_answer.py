@@ -114,19 +114,18 @@ def read_dataset(dataset, tier, vocab):
             context = context.replace("``", '" ')
 
             context_tokens = tokenize(context)
+            context_tokens = context_tokens[:FLAGS.output_size]
 
             qas = article_paragraphs[pid]['qas']
             for qid in range(len(qas)):
                 question = qas[qid]['question']
                 question_tokens = tokenize(question)
+                question_tokens = question_tokens[:FLAGS.max_question_length]
                 question_uuid = qas[qid]['id']
 
-                context_tokens = context[:FLAGS.output_size]
                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
                 context_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in context_tokens]
     
-
-                question_tokens = question_tokens[:FLAGS.max_question_length]
                 qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
                 question_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in question_tokens]
 
@@ -142,11 +141,8 @@ def read_dataset(dataset, tier, vocab):
 def prepare_dev(prefix, dev_filename, vocab):
     # Don't check file size, since we could be using other datasets
     dev_dataset = maybe_download(squad_base_url, dev_filename, prefix)
-
     dev_data = data_from_json(os.path.join(prefix, dev_filename))
-    context_data, question_data, context_data_chars, query_data_chars, question_uuid_data = read_dataset(dev_data, 'dev', vocab)
-
-    return context_data, question_data, context_data_chars, query_data_chars, question_uuid_data
+    return read_dataset(dev_data, 'dev', vocab)
 
 
 def generate_answers(sess, model, dataset, rev_vocab):
@@ -170,10 +166,19 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     answers = {}
 
-    contexts, context_lengths, questions, question_lengths, question_tokens, answer_tokens, question_uuids = dataset
+    contexts, context_lengths, questions, question_lengths, context_tokens, question_tokens, question_uuids = dataset
     counter = 0
 
-    batches = split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, answer_tokens, FLAGS.batch_size, question_uuids=question_uuids)
+    batches = split_in_batches(
+        questions=questions,
+        question_lengths=question_lengths,
+        contexts=contexts,
+        context_lengths=context_lengths,
+        context_tokens=context_tokens,
+        question_tokens=question_tokens,
+        batch_size=FLAGS.batch_size,
+        question_uuids=question_uuids
+        )
 
     for batch_x, batch_uuids in batches:
         counter += 1
@@ -208,7 +213,6 @@ def get_normalized_train_dir(train_dir):
 def main(_):
 
     vocab, rev_vocab = initialize_vocab(FLAGS.vocab_path)
-
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
 
     if not os.path.exists(FLAGS.log_dir):
@@ -237,7 +241,7 @@ def main(_):
     for context_token in context_data_chars:
         context_token.extend([ [qa_data.PAD_ID] * FLAGS.max_word_length] * (FLAGS.output_size - len(context_token)))
 
-    dataset = (context_data, context_lengths, question_data, question_lengths, question_data_chars, context_data_chars, question_uuid_data)
+    dataset = (context_data, context_lengths, question_data, question_lengths, context_data_chars, question_data_chars, question_uuid_data)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
