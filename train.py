@@ -154,9 +154,9 @@ def main(_):
         file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
         logging.getLogger().addHandler(file_handler)
 
-    logging.info("Model parameters: %s" % vars(FLAGS))
-    with tf.gfile.GFile(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
-        json.dump(FLAGS.__flags, fout)
+        logging.info("Model parameters: %s" % vars(FLAGS))
+        with tf.gfile.GFile(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
+            json.dump(FLAGS.__flags, fout)
 
     with tf.Session() as sess:
         load_train_dir = get_normalized_train_dir(FLAGS.load_train_dir or FLAGS.train_dir)
