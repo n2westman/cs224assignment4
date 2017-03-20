@@ -112,7 +112,7 @@ def get_normalized_train_dir(train_dir):
     if the location of the checkpoint files has moved, allowing usage with CodaLab.
     This must be done on both train.py and qa_answer.py in order to work.
     """
-    if not GOOGLE3:
+    if GOOGLE3:
         return train_dir    
 
     global_train_dir = '/tmp/cs224n-squad-train'
@@ -130,8 +130,8 @@ def main(_):
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
     dataset = {
-        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples),
-        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples)
+        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples, char_vocab_size=FLAGS.char_vocab_size),
+        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples, char_vocab_size=FLAGS.char_vocab_size)
     }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))
@@ -154,9 +154,9 @@ def main(_):
         file_handler = logging.FileHandler(pjoin(FLAGS.log_dir, "log.txt"))
         logging.getLogger().addHandler(file_handler)
 
-    logging.info("Model parameters: %s" % vars(FLAGS))
-    with tf.gfile.GFile(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
-        json.dump(FLAGS.__flags, fout)
+        logging.info("Model parameters: %s" % vars(FLAGS))
+        with tf.gfile.GFile(os.path.join(FLAGS.log_dir, "flags.json"), 'w') as fout:
+            json.dump(FLAGS.__flags, fout)
 
     with tf.Session() as sess:
         load_train_dir = get_normalized_train_dir(FLAGS.load_train_dir or FLAGS.train_dir)
