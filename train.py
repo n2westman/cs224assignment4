@@ -130,8 +130,8 @@ def main(_):
     # First function that is called when running code. Loads data, defines a few things and calls train()
 
     dataset = {
-        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples),
-        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples)
+        'train': load_and_preprocess_dataset(FLAGS.data_dir, 'train', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples, char_vocab_size=FLAGS.char_vocab_size),
+        'val': load_and_preprocess_dataset(FLAGS.data_dir, 'val', FLAGS.output_size, max_word_length=FLAGS.max_word_length, max_question_length=FLAGS.max_question_length, max_examples=FLAGS.max_examples, char_vocab_size=FLAGS.char_vocab_size)
     }
 
     embed_path = FLAGS.embed_path or pjoin("data", "squad", "glove.trimmed.{}.npz".format(FLAGS.embedding_size))

@@ -121,12 +121,14 @@ def read_dataset(dataset, tier, vocab):
                 question_tokens = tokenize(question)
                 question_uuid = qas[qid]['id']
 
+                context_tokens = context[:FLAGS.output_size]
                 context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
-                context_chars = [word2chars(w, FLAGS.max_word_length) for w in context_tokens]
+                context_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in context_tokens]
     
 
+                question_tokens = question_tokens[:FLAGS.max_question_length]
                 qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
-                question_chars = [word2chars(w, FLAGS.max_word_length) for w in question_tokens]
+                question_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in question_tokens]
 
                 context_data.append(context_ids)
                 context_data_chars.append(context_chars)

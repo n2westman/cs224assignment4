@@ -30,8 +30,14 @@ def open_dataset(dataset):
     questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens = zip(*inputs)
     return questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens,answers
 
-def word2chars(word, max_word_length):
-    word = [ord(x) for x in list(word[:max_word_length].lower()) ]
+def char2int(char, char_vocab_size):
+    x = ord(char)
+    if x >= char_vocab_size:
+        return 0
+    return x
+
+def word2chars(word, max_word_length, char_vocab_size):
+    word = [ char2int(x, char_vocab_size) for x in list(word[:max_word_length].lower()) ]
     word.extend([PAD_ID] * (max_word_length - len(word)))
     return word
 
@@ -73,7 +79,7 @@ def pad_sequences(sequences, max_length):
     for sequence in sequences:
         sequence.extend([str(PAD_ID)] * (max_length - len(sequence)))
 
-def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples, max_word_length, max_question_length):
+def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples, max_word_length, max_question_length, char_vocab_size):
     """
     Creates a dataset. One datum looks as follows: datum1 = [qustion_ids, question_lengths, contexts, ..] (see dataset def)
     Then the whole dataset is a list of this structure: [(datum1), (datum2), ..]
@@ -139,12 +145,12 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
             question = question[:max_question_length]
             questions.append(question)
             question_token = question_token[:max_question_length]
-            question_tokens.append( [word2chars(word, max_word_length) for word in question_token])
+            question_tokens.append( [word2chars(word, max_word_length, char_vocab_size) for word in question_token])
 
             context = context[:max_context_length]
             contexts.append(context)
             context_token = context_token[:max_context_length]
-            context_tokens.append( [word2chars(word, max_word_length) for word in context_token])
+            context_tokens.append( [word2chars(word, max_word_length, char_vocab_size) for word in context_token])
 
             answers.append(answer)
 
