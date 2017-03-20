@@ -244,7 +244,6 @@ class Mixer(object):
         A_d_transpose = tf.transpose(normalized_attention_weights_A_d, perm = [0, 2, 1])
         coattention_context_C_d = tf.matmul(Q_C_q_concat, A_d_transpose)
 
-
         # Forward direction cell
         lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(self.config.n_hidden_mix, forget_bias=1.0)
         # Backward direction cell
@@ -262,6 +261,7 @@ class Mixer(object):
 
         # This gets the final forward & backward hidden states from the output, and concatenates them
         U_final_hidden = tf.concat((U_final[0].h, U_final[1].h), 1)
+
         return tf.concat(U, 2), U_final_hidden
 
 class Decoder(object):
@@ -389,6 +389,7 @@ class Decoder(object):
                     decoder_bilstm_output, _, = tf.nn.bidirectional_dynamic_rnn(decoder_lstm_fw_cell, decoder_lstm_bw_cell, coattention_encoding_drop,
                         sequence_length=context_lengths, dtype=tf.float32)
                     decoder_bilstm_output = tf.concat(decoder_bilstm_output, 2)
+
                 weights = tf.get_variable('weights', shape=weights_shape, initializer=initializer, dtype=tf.float32)
                 #bnew = tf.Variable(tf.zeros(bnew_shape, tf.float32))
                 decoder_bilstm_output_reshape = tf.reshape(decoder_bilstm_output, [-1, 2 * self.config.n_hidden_dec_base])
@@ -543,6 +544,8 @@ class QASystem(object):
             self.pretrained_embeddings = np.load(gfile.GFile(embed_path))["glove"]
         else:
             self.pretrained_embeddings = np.load(embed_path)["glove"]
+            self.pretrained_embeddings_special_tokens = self.pretrained_embeddings[0:3]
+            self.pretrained_embeddings_words = self.pretrained_embeddings[3:]
         self.model = model
 
         # ==== set up placeholder tokens ========
@@ -662,9 +665,15 @@ class QASystem(object):
 
 
         with tf.variable_scope("embeddings"):
-            embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
-            question_embeddings_lookup = tf.nn.dropout(tf.nn.embedding_lookup(embeddings, self.question_placeholder), self.dropout_placeholder)
-            context_embeddings_lookup = tf.nn.dropout(tf.nn.embedding_lookup(embeddings, self.context_placeholder), self.dropout_placeholder)
+            initializer = tf.contrib.layers.xavier_initializer()
+            embeddings_special_tokens = tf.get_variable('special_tokens', shape=(3, self.config.embedding_size), initializer=initializer, dtype=tf.float32)
+            embeddings_words = tf.constant(self.pretrained_embeddings_words, dtype=tf.float32)
+            embeddings = tf.concat([embeddings_special_tokens, embeddings_words], 0)
+            #embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
+
+            question_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
+            context_embeddings_lookup_nodrop = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
+
             # Apply dropout to lookups
 
         if self.config.use_char_cnn_embedding:
