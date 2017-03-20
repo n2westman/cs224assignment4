@@ -544,8 +544,8 @@ class QASystem(object):
             self.pretrained_embeddings = np.load(gfile.GFile(embed_path))["glove"]
         else:
             self.pretrained_embeddings = np.load(embed_path)["glove"]
-            self.pretrained_embeddings_special_tokens = self.pretrained_embeddings[0:3]
-            self.pretrained_embeddings_words = self.pretrained_embeddings[3:]
+        self.pretrained_embeddings_special_tokens = self.pretrained_embeddings[0:3]
+        self.pretrained_embeddings_words = self.pretrained_embeddings[3:]
         self.model = model
 
         # ==== set up placeholder tokens ========
