@@ -544,8 +544,6 @@ class QASystem(object):
             self.pretrained_embeddings = np.load(gfile.GFile(embed_path))["glove"]
         else:
             self.pretrained_embeddings = np.load(embed_path)["glove"]
-        self.pretrained_embeddings_special_tokens = self.pretrained_embeddings[0:3]
-        self.pretrained_embeddings_words = self.pretrained_embeddings[3:]
         self.model = model
 
         # ==== set up placeholder tokens ========
@@ -666,10 +664,7 @@ class QASystem(object):
 
         with tf.variable_scope("embeddings"):
             initializer = tf.contrib.layers.xavier_initializer()
-            embeddings_special_tokens = tf.get_variable('special_tokens', shape=(3, self.config.embedding_size), initializer=initializer, dtype=tf.float32)
-            embeddings_words = tf.constant(self.pretrained_embeddings_words, dtype=tf.float32)
-            embeddings = tf.concat([embeddings_special_tokens, embeddings_words], 0)
-            #embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
+            embeddings = tf.constant(self.pretrained_embeddings, dtype=tf.float32)
 
             question_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.question_placeholder)
             context_embeddings_lookup = tf.nn.embedding_lookup(embeddings, self.context_placeholder)
@@ -906,7 +901,8 @@ class QASystem(object):
                     if self.config.test: #test the graph
                         logging.info("Graph successfully executes.")
 
-            make_prediction_plot(losses, self.config.batch_size, epoch)
+            if not GOOGLE3:
+                make_prediction_plot(losses, self.config.batch_size, epoch)
 
             logging.info("Evaluating current model..")
             _, _, valid_loss = self.evaluate_answer(session, dataset['val'], len(dataset['val']))
