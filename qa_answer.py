@@ -93,6 +93,8 @@ def initialize_vocab(vocab_path):
     else:
         raise ValueError("Vocabulary file %s not found.", vocab_path)
 
+def normalize( tokens ):
+    return [ t.lower() for t in tokens ]
 
 def read_dataset(dataset, tier, vocab):
     """Reads the dataset, extracts context, question, answer,
@@ -115,13 +117,13 @@ def read_dataset(dataset, tier, vocab):
             context = context.replace("''", '" ')
             context = context.replace("``", '" ')
 
-            context_tokens = tokenize(context)
+            context_tokens = normalize(tokenize(context))
             context_tokens = context_tokens[:FLAGS.output_size]
 
             qas = article_paragraphs[pid]['qas']
             for qid in range(len(qas)):
                 question = qas[qid]['question']
-                question_tokens = tokenize(question)
+                question_tokens = normalize(tokenize(question))
                 question_tokens = question_tokens[:FLAGS.max_question_length]
                 question_uuid = qas[qid]['id']
 
