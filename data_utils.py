@@ -176,7 +176,7 @@ def load_and_preprocess_dataset(path, dataset, max_context_length, max_examples,
 
     return dataset
 
-def split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens, batch_size, answers=None, question_uuids=None):
+def split_in_batches(questions, question_lengths, contexts, context_lengths, question_tokens, context_tokens, batch_size, answers=None, question_uuids=None, raw_queries=None):
     """
     Splits a dataset into batches, each of batch_size.
     """
@@ -190,6 +190,10 @@ def split_in_batches(questions, question_lengths, contexts, context_lengths, que
             'context_tokens': context_tokens[start_index:start_index + batch_size],
             'context_lengths': context_lengths[start_index:start_index + batch_size],
         }
+
+        if raw_queries is not None:
+            batch_x['raw_queries'] = raw_queries[start_index:start_index + batch_size]
+
         if answers is not None:
             batch_y = answers[start_index:start_index + batch_size]
             batches.append((batch_x, batch_y))

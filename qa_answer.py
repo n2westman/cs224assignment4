@@ -57,6 +57,7 @@ tf.app.flags.DEFINE_string("vocab_path", "data/squad/vocab.dat", "Path to vocab 
 tf.app.flags.DEFINE_string("embed_path", "", "Path to the trimmed GLoVe embedding (default: ./data/squad/glove.trimmed.{embedding_size}.npz)")
 tf.app.flags.DEFINE_string("model", "baseline", "Model: baseline or MHN (default: baseline)")
 tf.app.flags.DEFINE_string("dev_path", "data/squad/dev-v1.1.json", "Path to the JSON dev set to evaluate against (default: ./data/squad/dev-v1.1.json)")
+tf.app.flags.DEFINE_boolean("generate_prediction_trace", False, "Generate prediction-traces.json.")
 
 # Char CNN parameters
 tf.app.flags.DEFINE_string("filters_list", "100", "Out channel dims (number of filters), separated by commas")
@@ -103,6 +104,7 @@ def read_dataset(dataset, tier, vocab):
     query_data = []
     query_data_chars = []
     question_uuid_data = []
+    raw_queries = []
 
     for articles_id in tqdm(range(len(dataset['data'])), desc="Preprocessing {}".format(tier)):
         article_paragraphs = dataset['data'][articles_id]['paragraphs']
@@ -135,7 +137,9 @@ def read_dataset(dataset, tier, vocab):
                 query_data_chars.append(question_chars)
                 question_uuid_data.append(question_uuid)
 
-    return context_data, query_data, context_data_chars, query_data_chars, question_uuid_data
+                raw_queries.append( (context, question) )
+
+    return context_data, query_data, context_data_chars, query_data_chars, question_uuid_data, raw_queries
 
 
 def prepare_dev(prefix, dev_filename, vocab):
@@ -166,7 +170,7 @@ def generate_answers(sess, model, dataset, rev_vocab):
     """
     answers = {}
 
-    contexts, context_lengths, questions, question_lengths, context_tokens, question_tokens, question_uuids = dataset
+    contexts, context_lengths, questions, question_lengths, context_tokens, question_tokens, question_uuids, raw_queries = dataset
     counter = 0
 
     batches = split_in_batches(
@@ -177,9 +181,11 @@ def generate_answers(sess, model, dataset, rev_vocab):
         context_tokens=context_tokens,
         question_tokens=question_tokens,
         batch_size=FLAGS.batch_size,
-        question_uuids=question_uuids
+        question_uuids=question_uuids,
+        raw_queries=raw_queries,
         )
 
+    prediction_traces = []
     for batch_x, batch_uuids in batches:
         counter += 1
         logging.info("Reading batch %s." % counter)
@@ -190,9 +196,22 @@ def generate_answers(sess, model, dataset, rev_vocab):
             sentence = " ".join(map(lambda x: rev_vocab[int(x)], sentence_ids))
             answers[batch_uuids[idx]] = sentence
 
+            if FLAGS.generate_prediction_trace:
+                context_length = batch_x['context_lengths'][idx]
+                question_length = batch_x['question_lengths'][idx]
+                question = batch_x['questions'][idx][:question_length]
+                prediction_trace = {
+                    'context_raw': batch_x['raw_queries'][idx][0],
+                    'context_tokenized': " ".join(map(lambda x: rev_vocab[int(x)], context[:context_length])),
+                    'question_raw': batch_x['raw_queries'][idx][1],
+                    'question_tokenized': " ".join(map(lambda x: rev_vocab[int(x)], question)),
+                    'answer': sentence
+                }
+                prediction_traces.append( prediction_trace )
+
     logging.info("Produced %s answers for %s questions." % (len(answers), len(questions)))
 
-    return answers
+    return answers, prediction_traces
 
 
 def get_normalized_train_dir(train_dir):
@@ -229,7 +248,7 @@ def main(_):
 
     dev_dirname = os.path.dirname(os.path.abspath(FLAGS.dev_path))
     dev_filename = os.path.basename(FLAGS.dev_path)
-    context_data, question_data, context_data_chars, question_data_chars, question_uuid_data = prepare_dev(dev_dirname, dev_filename, vocab)
+    context_data, question_data, context_data_chars, question_data_chars, question_uuid_data, raw_queries = prepare_dev(dev_dirname, dev_filename, vocab)
 
     context_data, context_lengths = process_data(context_data, FLAGS.output_size)
     question_data, question_lengths = process_data(question_data, FLAGS.max_question_length)
@@ -241,7 +260,7 @@ def main(_):
     for context_token in context_data_chars:
         context_token.extend([ [qa_data.PAD_ID] * FLAGS.max_word_length] * (FLAGS.output_size - len(context_token)))
 
-    dataset = (context_data, context_lengths, question_data, question_lengths, context_data_chars, question_data_chars, question_uuid_data)
+    dataset = (context_data, context_lengths, question_data, question_lengths, context_data_chars, question_data_chars, question_uuid_data, raw_queries)
 
     # ========= Model-specific =========
     # You must change the following code to adjust to your model
@@ -259,12 +278,17 @@ def main(_):
     with tf.Session() as sess:
         train_dir = get_normalized_train_dir(FLAGS.train_dir)
         initialize_model(sess, qa, train_dir)
-        answers = generate_answers(sess, qa, dataset, rev_vocab)
+        answers, prediction_traces = generate_answers(sess, qa, dataset, rev_vocab)
 
         # write to json file to root dir
         with io.open('dev-prediction.json', 'w', encoding='utf-8') as f:
             f.write(unicode(json.dumps(answers, ensure_ascii=False)))
 
+        if FLAGS.generate_prediction_trace:
+            # write to json file to root dir
+            logging.info('Writing prediction traces.')
+            with io.open('dev-prediction-trace.json', 'w', encoding='utf-8') as f:
+                f.write(unicode(json.dumps(prediction_traces, ensure_ascii=False)))
 
 if __name__ == "__main__":
   tf.app.run()
