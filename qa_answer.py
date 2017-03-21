@@ -93,9 +93,6 @@ def initialize_vocab(vocab_path):
     else:
         raise ValueError("Vocabulary file %s not found.", vocab_path)
 
-def normalize( tokens ):
-    return [ t.lower() for t in tokens ]
-
 def read_dataset(dataset, tier, vocab):
     """Reads the dataset, extracts context, question, answer,
     and answer pointer in their own file. Returns the number
@@ -117,20 +114,20 @@ def read_dataset(dataset, tier, vocab):
             context = context.replace("''", '" ')
             context = context.replace("``", '" ')
 
-            context_tokens = normalize(tokenize(context))
+            context_tokens = tokenize(context)
             context_tokens = context_tokens[:FLAGS.output_size]
 
             qas = article_paragraphs[pid]['qas']
             for qid in range(len(qas)):
                 question = qas[qid]['question']
-                question_tokens = normalize(tokenize(question))
+                question_tokens = tokenize(question)
                 question_tokens = question_tokens[:FLAGS.max_question_length]
                 question_uuid = qas[qid]['id']
 
-                context_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in context_tokens]
+                context_ids = [str(vocab.get(w.lower(), qa_data.UNK_ID)) for w in context_tokens]
                 context_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in context_tokens]
     
-                qustion_ids = [str(vocab.get(w, qa_data.UNK_ID)) for w in question_tokens]
+                qustion_ids = [str(vocab.get(w.lower(), qa_data.UNK_ID)) for w in question_tokens]
                 question_chars = [word2chars(w, FLAGS.max_word_length, FLAGS.char_vocab_size) for w in question_tokens]
 
                 context_data.append(context_ids)
@@ -139,7 +136,7 @@ def read_dataset(dataset, tier, vocab):
                 query_data_chars.append(question_chars)
                 question_uuid_data.append(question_uuid)
 
-                raw_queries.append( (context, question) )
+                raw_queries.append( (context_tokens, question_tokens) )
 
     return context_data, query_data, context_data_chars, query_data_chars, question_uuid_data, raw_queries
 
@@ -194,20 +191,20 @@ def generate_answers(sess, model, dataset, rev_vocab):
         start_indices, end_indices = model.answer(sess, batch_x)
         for idx in range(len(batch_uuids)):
             context = batch_x['contexts'][idx]
-            sentence_ids = context[start_indices[idx]: end_indices[idx] + 1]
-            sentence = " ".join(map(lambda x: rev_vocab[int(x)], sentence_ids))
-            answers[batch_uuids[idx]] = sentence
+            raw_context = batch_x['raw_queries'][idx][0]
+            answer = " ".join(raw_context[start_indices[idx]: end_indices[idx] + 1])
+            answers[batch_uuids[idx]] = answer
 
             if FLAGS.generate_prediction_trace:
                 context_length = batch_x['context_lengths'][idx]
                 question_length = batch_x['question_lengths'][idx]
                 question = batch_x['questions'][idx][:question_length]
                 prediction_trace = {
-                    'context_raw': batch_x['raw_queries'][idx][0],
+                    'context_raw': " ".join(raw_context),
                     'context_tokenized': " ".join(map(lambda x: rev_vocab[int(x)], context[:context_length])),
-                    'question_raw': batch_x['raw_queries'][idx][1],
+                    'question_raw': " ".join(batch_x['raw_queries'][idx][1]),
                     'question_tokenized': " ".join(map(lambda x: rev_vocab[int(x)], question)),
-                    'answer': sentence
+                    'answer': " ".join(answer)
                 }
                 prediction_traces.append( prediction_trace )
 
@@ -290,7 +287,10 @@ def main(_):
             # write to json file to root dir
             logging.info('Writing prediction traces.')
             with io.open('dev-prediction-trace.json', 'w', encoding='utf-8') as f:
-                f.write(unicode(json.dumps(prediction_traces, ensure_ascii=False)))
+                # latin-1 encoding results in incorrect looking answer text written to the file, but at least avoids
+                # "'utf8' codec can't decode byte 0xe2 in position 288: invalid continuation byte" error
+                # during json.dumps().
+                f.write(unicode(json.dumps(prediction_traces, ensure_ascii=True, encoding='latin-1')))
 
 if __name__ == "__main__":
   tf.app.run()
